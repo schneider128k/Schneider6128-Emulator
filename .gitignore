@@ -1,0 +1,15 @@
+# Compiled Executables
+*.exe
+*.out
+*.app
+
+# IDE Folders
+.vscode/
+.vs/
+build/
+bin/
+obj/
+
+# OS generated files
+Thumbs.db
+Desktop.ini
