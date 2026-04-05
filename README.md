@@ -1,24 +1,29 @@
-# Schneider CPC 6128 Emulator (Z80 Core)
+# 🕹️ Schneider CPC 6128 Emulator (Z80 Core)
 
-A educational C++ reconstruction of the classic 1985 Schneider (Amstrad) CPC 6128 home computer. This project focuses on simulating the Zilog Z80 microprocessor and its interaction with 64KB of system RAM.
+Welcome to my digital reconstruction of the 1985 Schneider (Amstrad) CPC 6128. This is a passion project focused on simulating the Zilog Z80 microprocessor from the ground up in C++.
 
-## 🚀 Current Status: Milestone 1
-We have successfully implemented the **Fetch-Decode-Execute** cycle. The emulator can currently:
-* Address a full 64KB Memory Map.
-* Perform 8-bit Arithmetic (INC/DEC).
-* Handle Control Flow (Unconditional and Conditional Jumps).
-* Manage CPU Flags (Zero and Sign flags).
+## 🚧 Status: Work in Progress
+This project is an evolving labor of love. I tend to push updates to the CPU logic whenever I'm not:
+* 🔬 Wrestling with the complex math of **Quantum Algorithms**.
+* 🥁 Getting up to speed with the drum fills of **"Wave of Mutilation" by the Pixies** or locked into the groove of **"Square Hammer" by Ghost**.
 
-## 🛠️ How to Set Up
-This project uses the **MSYS2 (UCRT64)** toolchain on Windows.
+If the commit history looks like a drum fill—fast, erratic, but hopefully in time—now you know why!
 
-### Prerequisites
-1. Install [VS Code](https://code.visualstudio.com/).
-2. Install the **C/C++ Extension** (Microsoft) and **C/C++ Runner** (franneck94).
-3. Install **MSYS2** and the `mingw-w64-ucrt-x86_64-toolchain`.
+## 🚀 Current Milestone: The "Heartbeat"
+The emulator has officially "come to life." We have successfully implemented the basic **Fetch-Decode-Execute** cycle. 
 
-### Building and Running
-Open the folder in VS Code and use the "Run" button provided by the C++ Runner, or use the terminal:
+**Current Capabilities:**
+* **Memory Mapping:** Full 64KB RAM addressing with a simulated Bus.
+* **Instruction Set:** Core opcodes like `LD` (Load), `INC/DEC` (Math), and `JP` (Jumps).
+* **Logic:** A working Zero Flag that allows the CPU to handle loops and basic "decision making."
+
+## 🛠️ Tech Stack
+* **Language:** C++ (Standard 17+)
+* **Toolchain:** MSYS2 / MinGW-w64
+* **Editor:** VS Code (with C++ Runner extension)
+
+## 📚 How to Run
+If you want to see the Z80 "think," clone the repo and run:
 ```bash
 g++ main.cpp -o emulator.exe
 ./emulator.exe
