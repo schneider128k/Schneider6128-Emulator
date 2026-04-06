@@ -9,9 +9,9 @@ The WPS-Z80 is an 8-bit micro-logic environment designed for high-precision exec
 The following schematic represents the logical mapping and signal flow between the CPU and the 64KB RAM environment.
 
 ```text
-============================================================================
+==============================================================================
                 WPS-Z80 CORE UNIT (MILESTONE 3) - BUS DIAGRAM
-============================================================================
+==============================================================================
  [        Z80 CPU        ]                            [   MEMORY 64KB RAM   ]
  -------------------------                            -----------------------
  |   +-----------+       |                            |      0000h          |
@@ -42,7 +42,7 @@ The following schematic represents the logical mapping and signal flow between t
  NOTES:
  * C000h-C7FFh: VRAM Segment (Potential video/neural input layer).
  ** STACK OPERATION: CALL decrements SP by 2; RET increments SP by 2.
-============================================================================
+==============================================================================
 ```
 
 #### REGISTER CONFIGURATION
