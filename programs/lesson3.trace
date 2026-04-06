@@ -1,8 +1,8 @@
---- Schneider 6128 Z80 Trace: .\programs\lesson3.bin ---
-[0x0000] LD SP, 0xF000
-[0x0003] LD A, 0x05
-[0x0005] CALL 0x0009 | Pushing Return PC: 0x0008
-[0x0009] INC A | A=0x06
-[0x000A] RET | Returning to 0x0008
-[0x0008] HALT
+--- WPS-Z80 NEURAL TRACE: .\programs\lesson3.bin ---
+[0000] LD SP, 0xF000        | A:00 B:00 F:00000000 [Z:0 C:0]
+[0003] LD A, 0x05           | A:05 B:00 F:00000000 [Z:0 C:0]
+[0005] CALL 0x0009          | A:05 B:00 F:00000000 [Z:0 C:0]
+[0009] INC A                | A:06 B:00 F:00000000 [Z:0 C:0]
+[000A] RET                  | A:06 B:00 F:00000000 [Z:0 C:0]
+[0008] HALT                 | A:06 B:00 F:00000000 [Z:0 C:0]
 --- Execution Finished ---

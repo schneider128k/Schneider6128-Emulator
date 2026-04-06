@@ -1,6 +1,6 @@
---- Schneider 6128 Z80 Trace: .\programs\lesson2.bin ---
-[0x0000] LD B, 0x32
-[0x0002] LD A, B
-[0x0003] LD (0x7000), A | Val: 0x32
-[0x0006] HALT
+--- WPS-Z80 NEURAL TRACE: .\programs\lesson2.bin ---
+[0000] LD B, 0x32           | A:00 B:32 F:00000000 [Z:0 C:0]
+[0002] LD A, B              | A:32 B:32 F:00000000 [Z:0 C:0]
+[0003] LD (0x7000), A       | A:32 B:32 F:00000000 [Z:0 C:0]
+[0006] HALT                 | A:32 B:32 F:00000000 [Z:0 C:0]
 --- Execution Finished ---

@@ -1,7 +1,24 @@
 # Schneider 6128 Development Log
 
-**Current Milestone:** 3.0 (Stack & Subroutines)  
+**Current Milestone:** 4.0 (Flags & Comparative Logic)  
 **Hardware Specification:** [WPS-Z80 Reference Manual](./REFERENCE.md)
+
+---
+
+## Lesson 4: The Decision Brainstem
+**Date:** April 2026  
+**Focus:** Comparative logic and the Flag Register (F).
+
+### 🧠 New Concepts
+* **Flag Register (F):** Introduced bit-level status monitoring for logic branching.
+* **Zero Flag (Z):** Triggered when an operation result is zero; essential for equality checks.
+* **Carry Flag (C):** Triggered by unsigned overflows or borrows during subtraction (A < n).
+* **CP (Compare):** Implemented `CP n` (0xFE) to perform silent subtraction and update flags.
+
+### 📂 Program Files
+* [Source: gen_lesson4.py](./programs/gen_lesson4.py)
+* [Logic: lesson4.asm](./programs/lesson4.asm)
+* [Execution Trace: lesson4.trace](./programs/lesson4.trace)
 
 ---
 
