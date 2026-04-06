@@ -1,5 +1,9 @@
 # Schneider CPC 6128 Emulator (Z80 Core)
 
+> **Quick Links:** [Technical Reference](./REFERENCE.md) | [Development Log](./LOGBOOK.md) | [Programs](./programs/)
+
+---
+
 A high-performance C++ emulation of the Zilog Z80 CPU, specifically targeting the Schneider/Amstrad CPC 6128 hardware.
 
 ## 🚀 The Vision: AI & Reinforcement Learning
