@@ -6,6 +6,42 @@
 
 ### [01] ARCHITECTURAL OVERVIEW
 The WPS-Z80 is an 8-bit micro-logic environment designed for high-precision execution and future neural-network integration.
+The following schematic represents the logical mapping and signal flow between the CPU and the 64KB RAM environment.
+
+============================================================================
+                WPS-Z80 CORE UNIT (MILESTONE 3) - BUS DIAGRAM
+============================================================================
+ [        Z80 CPU        ]                            [   MEMORY 64KB RAM   ]
+ -------------------------                            -----------------------
+ |   +-----------+       |                            |      0000h          |
+ |   |    PC     | 16-bit|                            | PROGRAM / ROM AREA  |
+ |   | (0x0000)  |=======|====[ ADDRESS BUS ]========>| (Entry Vector)      |
+ |   +-----------+       |    (Unidirectional)        |                     |
+ -------------------------                            -----------------------
+ |   +-----------+       |                            |      4000h          |
+ |   |    SP     | 16-bit|                            |   GENERAL DATA      |
+ |   | (0xF000)  |=======|====[ ADDRESS BUS ]========>|   / USER RAM        |
+ |   +-----------+       |    (Unidirectional)        |                     |
+ -------------------------                            |                     |
+ |   +-----------+       |                            |                     |
+ |   |     A     | 8-bit |                            |                     |
+ |   | (Accum.)  |=======|<===[  DATA BUS   ]========>|                     |
+ |   +-----------+       |    (Bidirectional)         |                     |
+ -------------------------                            |                     |
+ |   +-----------+       |                            -----------------------
+ |   |     B     | 8-bit |                            |      C000h          |
+ |   | (Auxiliary) |=====|<===[  DATA BUS   ]========>|  RESERVED VRAM*     |
+ |   +-----------+       |                            -----------------------
+ |                       |                            |      F000h          |
+ |   +-----------+       |                            | STACK SEGMENT**     |
+ |   |  CONTROL  |       |                            | (Grows Downward)    |
+ |   |  DECODE   |=======|===========================>|                     |
+ |   +-----------+       |                            |      FFFFh          |
+ -------------------------                            -----------------------
+ NOTES:
+ * C000h-C7FFh: VRAM Segment (Potential video/neural input layer).
+ ** STACK OPERATION: CALL decrements SP by 2; RET increments SP by 2.
+============================================================================
 
 #### REGISTER CONFIGURATION
 * **A (Accumulator):** Primary 8-bit logic engine.
