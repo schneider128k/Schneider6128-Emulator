@@ -1,0 +1,14 @@
+--- WPS-Z80 NEURAL TRACE: .\programs\lesson5.bin ---
+[0000] LD B, 0x03                     | A:00 B:03 F:00000000 [Z:0 C:0]
+[0002] DEC B                          | A:00 B:02 F:00000000 [Z:0 C:0]
+[0003] JR NZ -> 0x0002                | A:00 B:02 F:00000000 [Z:0 C:0]
+[0002] DEC B                          | A:00 B:01 F:00000000 [Z:0 C:0]
+[0003] JR NZ -> 0x0002                | A:00 B:01 F:00000000 [Z:0 C:0]
+[0002] DEC B                          | A:00 B:00 F:01000000 [Z:1 C:0]
+[0003] JR NZ [not taken]              | A:00 B:00 F:01000000 [Z:1 C:0]
+[0005] LD A, 0xFF                     | A:FF B:00 F:01000000 [Z:1 C:0]
+[0007] CP 0xFF                        | A:FF B:00 F:01000000 [Z:1 C:0]
+[0009] JP Z, 0x000F [taken]           | A:FF B:00 F:01000000 [Z:1 C:0]
+[000F] LD (0x8000), A                 | A:FF B:00 F:01000000 [Z:1 C:0]
+[0012] HALT                           | A:FF B:00 F:01000000 [Z:1 C:0]
+--- Execution Finished ---

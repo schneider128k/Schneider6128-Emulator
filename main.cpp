@@ -9,17 +9,29 @@
 
 /**
  * WOCJAN PERCUSSIVE SYSTEMS - Z80 CORE UNIT
- * Milestone 4: Flag Register (F) and Comparative Logic
+ * Milestone 5: Branching (Conditional Jumps & Relative Jumps)
  * ----------------------------------------------------------------------------
  * ARCHITECTURE NOTE:
- * The Z80 uses the Flag Register (F) to store the results of arithmetic and 
+ * The Z80 uses the Flag Register (F) to store the results of arithmetic and
  * logical operations. This allows the CPU to perform conditional jumps.
- * * Bit 7: S (Sign) - 1 if result is negative
- * Bit 6: Z (Zero) - 1 if result is zero
- * Bit 4: H (Half-Carry) - Used for BCD arithmetic
- * Bit 2: P/V (Parity/Overflow) - Logic parity or signed overflow
- * Bit 1: N (Add/Sub) - 1 if last op was subtraction
- * Bit 0: C (Carry) - 1 if an unsigned overflow/underflow occurred
+ *   Bit 7: S (Sign)        - 1 if result is negative
+ *   Bit 6: Z (Zero)        - 1 if result is zero
+ *   Bit 4: H (Half-Carry)  - Used for BCD arithmetic
+ *   Bit 2: P/V (Parity/Overflow) - Logic parity or signed overflow
+ *   Bit 1: N (Add/Sub)     - 1 if last op was subtraction
+ *   Bit 0: C (Carry)       - 1 if an unsigned overflow/underflow occurred
+ * ----------------------------------------------------------------------------
+ * Milestone 5 Additions (Branching):
+ *   JP  nn      (0xC3) - Unconditional absolute jump [existed from Lesson 1]
+ *   JP  NZ, nn  (0xC2) - Jump if Zero flag is CLEAR
+ *   JP  Z,  nn  (0xCA) - Jump if Zero flag is SET
+ *   JP  NC, nn  (0xD2) - Jump if Carry flag is CLEAR
+ *   JP  C,  nn  (0xDA) - Jump if Carry flag is SET
+ *   JR  e       (0x18) - Unconditional relative jump (signed 8-bit offset)
+ *   JR  NZ, e   (0x20) - Relative jump if Zero flag is CLEAR
+ *   JR  Z,  e   (0x28) - Relative jump if Zero flag is SET
+ *   JR  NC, e   (0x30) - Relative jump if Carry flag is CLEAR
+ *   JR  C,  e   (0x38) - Relative jump if Carry flag is SET
  * ----------------------------------------------------------------------------
  */
 
@@ -51,9 +63,9 @@ struct Memory {
 
 struct Z80CPU {
     // 8-bit Primary Registers
-    uint8_t a = 0; // Accumulator
-    uint8_t b = 0; // Auxiliary B
-    uint8_t f = 0; // Flag Register
+    uint8_t  a = 0;  // Accumulator
+    uint8_t  b = 0;  // Auxiliary B
+    uint8_t  f = 0;  // Flag Register
 
     // 16-bit Special Purpose Registers
     uint16_t pc = 0; // Program Counter
@@ -62,7 +74,6 @@ struct Z80CPU {
     bool halted = false;
 
     // --- Utility Functions ---
-
     std::string to_hex(uint16_t val, int width = 4) {
         std::stringstream ss;
         ss << std::uppercase << std::hex << std::setw(width) << std::setfill('0') << val;
@@ -77,17 +88,20 @@ struct Z80CPU {
     // Surgical Flag Manipulation
     void setFlag(uint8_t mask, bool condition) {
         if (condition) f |= mask;
-        else f &= ~mask;
+        else           f &= ~mask;
     }
 
-    // --- Memory Interaction ---
+    // Flag query helpers (used by conditional branch logic)
+    bool flagZ() const { return (f & FLAG_Z) != 0; }
+    bool flagC() const { return (f & FLAG_C) != 0; }
 
+    // --- Memory Interaction ---
     uint8_t fetch(Memory& mem) {
         return mem.read(pc++);
     }
 
     uint16_t fetch16(Memory& mem) {
-        uint16_t low = fetch(mem);
+        uint16_t low  = fetch(mem);
         uint16_t high = fetch(mem);
         return (high << 8) | low;
     }
@@ -100,118 +114,189 @@ struct Z80CPU {
     }
 
     uint16_t pop16(Memory& mem) {
-        uint8_t low = mem.read(sp++);
+        uint8_t low  = mem.read(sp++);
         uint8_t high = mem.read(sp++);
         return (high << 8) | low;
     }
 
-    // --- The Instruction Cycle ---
+    // --- Milestone 5: Relative Jump Helper ---
+    // JR uses a *signed* 8-bit displacement relative to the instruction
+    // AFTER the JR opcode + displacement byte (i.e., relative to PC after fetch).
+    // Cast to int8_t to sign-extend, then add to PC (which is already past the displacement).
+    void do_jr(Memory& mem, bool condition, std::string& mnemonic, const std::string& tag) {
+        int8_t offset = static_cast<int8_t>(fetch(mem)); // signed displacement
+        if (condition) {
+            pc = static_cast<uint16_t>(static_cast<int32_t>(pc) + offset);
+            mnemonic = "JR " + tag + " -> 0x" + to_hex(pc);
+        } else {
+            mnemonic = "JR " + tag + " [not taken]";
+        }
+    }
 
+    // --- Milestone 5: Absolute Conditional Jump Helper ---
+    void do_jp_cond(Memory& mem, bool condition, std::string& mnemonic, const std::string& tag) {
+        uint16_t target = fetch16(mem);
+        if (condition) {
+            pc = target;
+            mnemonic = "JP " + tag + ", 0x" + to_hex(pc) + " [taken]";
+        } else {
+            mnemonic = "JP " + tag + ", 0x" + to_hex(target) + " [not taken]";
+        }
+    }
+
+    // --- The Instruction Cycle ---
     void step(Memory& mem, std::ostream& trace) {
         if (halted) return;
 
         uint16_t current_pc = pc;
-        uint8_t opcode = fetch(mem);
+        uint8_t  opcode     = fetch(mem);
         std::string mnemonic;
 
         switch (opcode) {
-            
-            // === System Control ===
-            case 0x00: // NOP
-                mnemonic = "NOP";
-                break;
 
-            case 0x76: // HALT
-                halted = true;
-                mnemonic = "HALT";
-                break;
+        // === System Control ===
+        case 0x00: // NOP
+            mnemonic = "NOP";
+            break;
 
-            // === 8-bit Loads ===
-            case 0x3E: // LD A, n
-                a = fetch(mem);
-                mnemonic = "LD A, 0x" + to_hex(a, 2);
-                break;
+        case 0x76: // HALT
+            halted   = true;
+            mnemonic = "HALT";
+            break;
 
-            case 0x06: // LD B, n
-                b = fetch(mem);
-                mnemonic = "LD B, 0x" + to_hex(b, 2);
-                break;
+        // === 8-bit Loads ===
+        case 0x3E: // LD A, n
+            a = fetch(mem);
+            mnemonic = "LD A, 0x" + to_hex(a, 2);
+            break;
 
-            case 0x78: // LD A, B
-                a = b;
-                mnemonic = "LD A, B";
-                break;
+        case 0x06: // LD B, n
+            b = fetch(mem);
+            mnemonic = "LD B, 0x" + to_hex(b, 2);
+            break;
 
-            case 0x32: { // LD (nn), A
-                uint16_t addr = fetch16(mem);
-                mem.write(addr, a);
-                mnemonic = "LD (0x" + to_hex(addr) + "), A";
-                break;
-            }
+        case 0x78: // LD A, B
+            a = b;
+            mnemonic = "LD A, B";
+            break;
 
-            // === 16-bit Loads ===
-            case 0x31: // LD SP, nn
-                sp = fetch16(mem);
-                mnemonic = "LD SP, 0x" + to_hex(sp);
-                break;
+        case 0x32: { // LD (nn), A
+            uint16_t addr = fetch16(mem);
+            mem.write(addr, a);
+            mnemonic = "LD (0x" + to_hex(addr) + "), A";
+            break;
+        }
 
-            // === Arithmetic & Logic ===
-            case 0x3C: // INC A
-                a++;
-                setFlag(FLAG_Z, a == 0);
-                setFlag(FLAG_S, (a & 0x80) != 0); // Sign bit
-                mnemonic = "INC A";
-                break;
+        // === 16-bit Loads ===
+        case 0x31: // LD SP, nn
+            sp = fetch16(mem);
+            mnemonic = "LD SP, 0x" + to_hex(sp);
+            break;
 
-            case 0x05: // DEC B
-                b--;
-                setFlag(FLAG_Z, b == 0);
-                setFlag(FLAG_S, (b & 0x80) != 0);
-                mnemonic = "DEC B";
-                break;
+        // === Arithmetic & Logic ===
+        case 0x3C: // INC A
+            a++;
+            setFlag(FLAG_Z, a == 0);
+            setFlag(FLAG_S, (a & 0x80) != 0);
+            mnemonic = "INC A";
+            break;
 
-            case 0xFE: { // CP n
-                uint8_t n = fetch(mem);
-                uint8_t result = a - n;
-                setFlag(FLAG_Z, result == 0);
-                setFlag(FLAG_C, a < n);
-                mnemonic = "CP 0x" + to_hex(n, 2);
-                break;
-            }
+        case 0x05: // DEC B
+            b--;
+            setFlag(FLAG_Z, b == 0);
+            setFlag(FLAG_S, (b & 0x80) != 0);
+            mnemonic = "DEC B";
+            break;
 
-            // === Jumps & Subroutines ===
-            case 0xC3: // JP nn
-                pc = fetch16(mem);
-                mnemonic = "JP 0x" + to_hex(pc);
-                break;
+        case 0xFE: { // CP n
+            uint8_t n      = fetch(mem);
+            uint8_t result = a - n;
+            setFlag(FLAG_Z, result == 0);
+            setFlag(FLAG_C, a < n);
+            mnemonic = "CP 0x" + to_hex(n, 2);
+            break;
+        }
 
-            case 0xCD: { // CALL nn
-                uint16_t target = fetch16(mem);
-                mnemonic = "CALL 0x" + to_hex(target);
-                push16(mem, pc);
-                pc = target;
-                break;
-            }
+        // === Jumps & Subroutines ===
 
-            case 0xC9: // RET
-                pc = pop16(mem);
-                mnemonic = "RET";
-                break;
+        // --- Absolute Jumps ---
+        case 0xC3: // JP nn  (unconditional, always present)
+            pc = fetch16(mem);
+            mnemonic = "JP 0x" + to_hex(pc);
+            break;
 
-            default:
-                mnemonic = "UNKNOWN: 0x" + to_hex(opcode, 2);
-                halted = true;
-                break;
+        case 0xC2: // JP NZ, nn
+            do_jp_cond(mem, !flagZ(), mnemonic, "NZ");
+            break;
+
+        case 0xCA: // JP Z, nn
+            do_jp_cond(mem, flagZ(), mnemonic, "Z");
+            break;
+
+        case 0xD2: // JP NC, nn
+            do_jp_cond(mem, !flagC(), mnemonic, "NC");
+            break;
+
+        case 0xDA: // JP C, nn
+            do_jp_cond(mem, flagC(), mnemonic, "C");
+            break;
+
+        // --- Relative Jumps (JR) ---
+        // JR uses a signed 8-bit offset from the byte AFTER the displacement.
+        // This makes loops compact: the displacement fits in one byte,
+        // and backward branches (loops) use negative offsets (0xFE = -2, etc.).
+
+        case 0x18: { // JR e  (unconditional relative)
+            int8_t offset = static_cast<int8_t>(fetch(mem));
+            pc = static_cast<uint16_t>(static_cast<int32_t>(pc) + offset);
+            mnemonic = "JR 0x" + to_hex(pc);
+            break;
+        }
+
+        case 0x20: // JR NZ, e
+            do_jr(mem, !flagZ(), mnemonic, "NZ");
+            break;
+
+        case 0x28: // JR Z, e
+            do_jr(mem, flagZ(), mnemonic, "Z");
+            break;
+
+        case 0x30: // JR NC, e
+            do_jr(mem, !flagC(), mnemonic, "NC");
+            break;
+
+        case 0x38: // JR C, e
+            do_jr(mem, flagC(), mnemonic, "C");
+            break;
+
+        // --- Stack & Subroutines ---
+        case 0xCD: { // CALL nn
+            uint16_t target = fetch16(mem);
+            mnemonic = "CALL 0x" + to_hex(target);
+            push16(mem, pc);
+            pc = target;
+            break;
+        }
+
+        case 0xC9: // RET
+            pc = pop16(mem);
+            mnemonic = "RET";
+            break;
+
+        default:
+            mnemonic = "UNKNOWN: 0x" + to_hex(opcode, 2);
+            halted = true;
+            break;
         }
 
         // --- Formatting the Trace Output ---
         std::stringstream ss;
-        ss << "[" << to_hex(current_pc) << "] " 
-           << std::left << std::setw(20) << mnemonic 
-           << " | A:" << to_hex(a, 2) << " B:" << to_hex(b, 2) 
-           << " F:" << std::bitset<8>(f) 
-           << " [Z:" << ((f & FLAG_Z) ? '1' : '0') << " C:" << ((f & FLAG_C) ? '1' : '0') << "]";
-        
+        ss << "[" << to_hex(current_pc) << "] "
+           << std::left << std::setw(30) << mnemonic
+           << " | A:" << to_hex(a, 2) << " B:" << to_hex(b, 2)
+           << " F:" << std::bitset<8>(f)
+           << " [Z:" << (flagZ() ? '1' : '0') << " C:" << (flagC() ? '1' : '0') << "]";
+
         log(trace, ss.str());
     }
 };
@@ -223,8 +308,8 @@ int main(int argc, char* argv[]) {
     }
 
     std::string binPath = argv[1];
-    Memory mem;
-    Z80CPU cpu;
+    Memory  mem;
+    Z80CPU  cpu;
 
     if (!mem.loadFromFile(binPath)) {
         std::cerr << "Error: Could not load " << binPath << std::endl;

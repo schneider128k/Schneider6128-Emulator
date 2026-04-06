@@ -5,6 +5,37 @@
 
 ---
 
+## Lesson 5: The Decision Engine (Branching)
+
+**Date:** April 2026
+**Milestone:** 5.0 Stable
+**Focus:** Conditional and relative jumps using the existing Flag Register.
+
+### 🧠 New Concepts
+
+* **JP cc, nn (Conditional Absolute Jump):** Four variants added — `JP NZ`, `JP Z`, `JP NC`, `JP C`. The CPU reads the 16-bit target address unconditionally, but only updates PC if the relevant flag matches.
+* **JR e (Relative Jump):** Unconditional and four conditional variants (`JR NZ`, `JR Z`, `JR NC`, `JR C`). The displacement is a **signed 8-bit** value added to PC *after* the displacement byte is fetched. This makes backward loops compact (e.g., `JR NZ, -2` = `0x20 0xFE`).
+* **Counted Loop Pattern:** `LD B, n` / `DEC B` / `JR NZ` — the canonical Z80 idiom for fixed-count loops. DEC B sets the Z flag when B hits 0, which is the loop termination condition.
+* **Helper Methods:** Added `flagZ()` and `flagC()` inline queries to `Z80CPU` to keep branch logic readable and DRY.
+* **Trace Enhancement:** Mnemonic column widened to 30 chars to accommodate conditional branch annotations (`[taken]` / `[not taken]`).
+
+### 📂 Program Files
+
+* [Source: gen_lesson5.py](programs/gen_lesson5.py)
+* [Logic: lesson5.asm](programs/lesson5.asm)
+* [Execution Trace: lesson5.trace](programs/lesson5.trace)
+
+### ✅ Test Cases Passing
+
+| Test | Expected Behavior |
+|------|------------------|
+| `JR NZ` loop | Executes body 3 times, exits when B=0 (Z set) |
+| `CP 0xFF` + `JP Z` | Branch taken; `RAM[0x8000] = 0xFF` |
+| Wrong-branch `HALT` | Never reached |
+| All Lesson 1–4 bins | Unchanged; re-run confirms no regression |
+
+---
+
 ## Lesson 4: The Decision Brainstem
 **Date:** April 2026  
 **Focus:** Comparative logic and the Flag Register (F).
