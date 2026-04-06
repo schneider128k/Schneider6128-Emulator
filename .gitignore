@@ -10,6 +10,11 @@ build/
 bin/
 obj/
 
+SDL3/
+SDL3.dll
+SDL3-devel-3.4.4-mingw/
+SDL3-3.4.4-win32-x64.zip
+
 # OS generated files
 Thumbs.db
 Desktop.ini
