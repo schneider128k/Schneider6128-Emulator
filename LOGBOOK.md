@@ -16,7 +16,7 @@
 
 ### 📂 Program Files
 * [Source: gen_lesson3.py](./programs/gen_lesson3.py)
-* [Logic: lesson3.asm](./programs/gen_lesson3.asm)
+* [Logic: lesson3.asm](./programs/lesson3.asm)
 * [Execution Trace: lesson3.trace](./programs/lesson3.trace)
 
 ---
