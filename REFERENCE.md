@@ -8,6 +8,7 @@
 The WPS-Z80 is an 8-bit micro-logic environment designed for high-precision execution and future neural-network integration.
 The following schematic represents the logical mapping and signal flow between the CPU and the 64KB RAM environment.
 
+```
 ==============================================================================
                 WPS-Z80 CORE UNIT (MILESTONE 4) - BUS DIAGRAM
 ==============================================================================
@@ -41,6 +42,7 @@ The following schematic represents the logical mapping and signal flow between t
  * C000h-C7FFh: VRAM Segment (Potential video/neural input layer).
  ** STACK OPERATION: CALL decrements SP by 2; RET increments SP by 2.
 ==============================================================================
+```
 
 #### REGISTER CONFIGURATION
 * **A (Accumulator)**: Primary 8-bit logic engine.
