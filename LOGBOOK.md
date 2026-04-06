@@ -1,38 +1,36 @@
-# Development Logbook
+# Schneider 6128 Development Log
 
-## Lesson 2: Data Movers & The RL Bridge
+**Current Milestone:** 3.0 (Stack & Subroutines)  
+**Hardware Specification:** [WPS-Z80 Reference Manual](./REFERENCE.md)
+
+---
+
+## Lesson 3: The Stack & Subroutines
 **Date:** April 2026  
-**Status:** 🏗️ In Progress
+**Focus:** Non-linear execution and the Trace Engine.
 
 ### 🧠 New Concepts
-1. **8-bit Load Groups:** Implemented `LD B, n`, `LD A, B`, and `LD (nn), A`. These are the "sensors" and "actuators" that allow data to flow between CPU registers and RAM.
-2. **Binary Decoupling:** Implemented a `loadFromFile` mechanism in the `Memory` class. The emulator now acts as a virtual machine, reading raw Z80 instructions from external files via command-line arguments.
-3. **The "Reward Signal" Path:** Verified that we can "poke" values into specific RAM addresses (e.g., `0x7000`). In future RL iterations, this address will represent the game score, serving as the agent's reward signal.
+* **The Stack Pointer (SP):** Implemented as a 16-bit register. The stack grows **downward** in memory.
+* **CALL/RET:** The "Heart" of subroutines. The CPU now pushes the return address to the stack before jumping.
+* **Auto-Tracing:** Implemented a `.trace` file generator to log every instruction for GitHub review.
 
-### 💻 Technical Milestones
-* **Binary Generation:** Successfully bypassed Windows shell limitations (`echo -ne` issues) by using Python to generate pure binary files.
-* **Integrity Check:** Verified binary files using `Format-Hex`. Confirmed that while standard text viewers see ASCII artifacts (like `2x2p`), the underlying hex bytes (`06 32 78...`) are correctly aligned with Z80 opcodes.
+### 📂 Program Files
+* [Source: gen_lesson3.py](./programs/gen_lesson3.py)
+* [Logic: lesson3.asm](./programs/gen_lesson3.asm)
+* [Execution Trace: lesson3.trace](./programs/lesson3.trace)
 
-### 📂 Supplemental Files
-* [Technical Specification (PDF)](./schneider_6128_tech_spec_v1.pdf): Detailed hardware register and opcode reference.
+---
+
+## Lesson 2: Binary Loading & Memory Pokes
+**Status:** ✅ Completed
+* **Loader:** Switched from hardcoded arrays to a decoupled `.bin` file loader.
+* **Instruction Set:** Added 8-bit load groups (`LD B, n`, `LD A, B`, `LD (nn), A`).
+* [Source: gen_lesson2.py](./programs/gen_lesson2.py)
 
 ---
 
 ## Lesson 1: The Heartbeat
-**Date:** April 2026  
 **Status:** ✅ Completed
-
-### 🧠 Concepts Covered
-1. **Z80 Architecture:** Defined the primary registers: Accumulator (A), Flags (F), and Program Counter (PC).
-2. **The Fetch-Decode-Execute Cycle:** Implemented the core loop that reads an opcode from memory, increments the PC, and performs the logic.
-3. **Little-Endian Memory:** Handled the Z80's specific way of reading 16-bit addresses (Low-byte first).
-4. **Instruction Set (Opcode) Basics:**
-   * `0x00` (NOP): No operation.
-   * `0x3E` (LD A, n): Loading an immediate 8-bit value.
-   * `0x3C` (INC A): Incrementing a register and updating Zero/Sign flags.
-   * `0xC3` (JP nn): Unconditional jump to a memory address.
-
-### 💻 Technical Milestones
-* Created the `Memory` and `Z80CPU` structs in C++.
-* Verified the core loop with a simple program that increments a value until it hits a jump instruction.
-* Successfully pushed the initial codebase to GitHub.
+* **Core Architecture:** Defined registers (A, F, PC) and the Fetch-Decode-Execute loop.
+* **Opcodes:** `NOP`, `LD A, n`, `INC A`, `JP nn`.
+* [Source: gen_lesson1.py](./programs/gen_lesson1.py)

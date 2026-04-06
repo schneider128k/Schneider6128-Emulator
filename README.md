@@ -1,31 +1,19 @@
 # Schneider CPC 6128 Emulator (Z80 Core)
 
-A high-performance C++ emulation of the classic Schneider/Amstrad CPC 6128 hardware. 
+A high-performance C++ emulation of the Zilog Z80 CPU, specifically targeting the Schneider/Amstrad CPC 6128 hardware.
 
-## 🎯 The Ultimate Goal: AI & Reinforcement Learning
-Beyond simple emulation, the long-term vision for this project is to integrate the Z80 core into a **Reinforcement Learning framework (such as OpenAI Gym)**. 
+## 🚀 The Vision: AI & Reinforcement Learning
+The goal of this project is to create a lightweight, modular emulator that can be wrapped in a **Python OpenAI Gym environment**. This will allow Reinforcement Learning agents to "play" 8-bit games by processing the video buffer and memory states.
 
-By exposing the emulator's memory and video buffer to a Python-based RL agent, the goal is to recreate a **DeepMind-style DQN (Deep Q-Network)** experiment. The agent will "see" the emulated pixels and learn to master classic 8-bit games by interacting directly with this custom C++ engine.
+## 🏗️ Project Architecture
+* **Core:** C++17 (Z80 instruction set, 64KB RAM).
+* **Toolchain:** Python-based "Assembler" scripts in `/programs`.
+* **Tracing:** Every execution generates a `.trace` file for headless debugging and GitHub visibility.
 
-## 🚧 Project Roadmap & Status
+## 🛠️ How to Run
+1. **Compile:** `g++ main.cpp -o emulator`
+2. **Generate Program:** `python programs/gen_lesson3.py`
+3. **Execute:** `.\emulator.exe programs/lesson3.bin`
 
-### Milestone 2: Data Movers & Binary Loading (Current)
-* **Instruction Set:** Added 8-bit Load groups (`LD B, n`, `LD A, B`, `LD (nn), A`).
-* **Binary Loader:** Implemented a decoupled system to load raw `.bin` files into RAM via command-line arguments.
-* **RL Bridge:** Verified the ability to "poke" values into specific RAM addresses for reward-signal tracking.
-
-### Milestone 1: The Heartbeat (Completed)
-* **Core Architecture:** Defined Z80 registers (A, F, PC) and 64KB Memory Map.
-* **Execution Loop:** Implemented the Fetch-Decode-Execute cycle and Little-Endian word fetching.
-* **Basic Opcodes:** Support for `NOP`, `LD A, n`, `INC A`, and `JP nn`.
-
-## 🛠️ Tech Stack
-* **Language:** C++
-* **Architecture:** Zilog Z80 (8-bit)
-* **Build System:** Manual (g++ / clang)
-* **Goal Environment:** OpenAI Gym / Stable Baselines 3
-
-## 🔬 Personal Notes
-This project is an evolving labor of love, developed between:
-* Wrestling with the complex math of **Quantum Algorithms**.
-* Mastering the drum fills of **The Pixies** ("Wave of Mutilation") and **Ghost** ("Square Hammer").
+## 📖 Development History
+For detailed technical notes, opcode implementations, and lesson-by-lesson progress, see the [LOGBOOK.md](./LOGBOOK.md).
