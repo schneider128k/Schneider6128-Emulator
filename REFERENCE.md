@@ -1,6 +1,6 @@
 # WPS-Z80 Technical Reference
 
-**Revision:** 8.0 — Milestone 8 (Full ALU)
+**Revision:** 9.0 — Milestone 9 (Sprite Blitting)
 **Project:** Schneider CPC 6128 Emulation Layer
 **Links:** [LOGBOOK.md](LOGBOOK.md) · [README.md](README.md)
 
@@ -10,7 +10,7 @@
 
 ![WPS-Z80 architecture diagram](docs/wps_z80_architecture.svg)
 
-The emulator models a Zilog Z80 CPU connected to a flat 64 KB RAM space. The CPU fetches opcodes from the program area, executes them, and logs every step to a `.trace` file. The Branch Logic unit reads the Flag Register (F) to decide whether conditional jumps are taken. After execution, if any write touched `0xC000–0xFFFF`, the 16 KB VRAM block is dumped to a `.vram` file for the monitor. The monitor decodes the VRAM using the selected video mode (0, 1, or 2) and renders it live.
+The emulator models a Zilog Z80 CPU connected to a flat 64 KB RAM space. The CPU fetches opcodes from the program area, executes them, and logs every step to a `.trace` file. The Branch Logic unit reads the Flag Register (F) to decide whether conditional jumps are taken. After execution, if any write touched `0xC000–0xFFFF`, the 16 KB VRAM block is dumped to a `.vram` file for the monitor. The monitor decodes the VRAM using the selected video mode (0, 1, or 2) and renders it live at authentic CPC pixel proportions.
 
 ---
 
@@ -19,12 +19,12 @@ The emulator models a Zilog Z80 CPU connected to a flat 64 KB RAM space. The CPU
 | Register | Width | Role |
 |----------|-------|------|
 | PC | 16-bit | Program Counter. Points to the next opcode byte. Auto-increments on every fetch. |
-| SP | 16-bit | Stack Pointer. Initialise to `0xF000`. Decrements on CALL, increments on RET. |
+| SP | 16-bit | Stack Pointer. Initialise to `0xF000`. Decrements on PUSH, increments on POP. |
 | A | 8-bit | Accumulator. Primary operand for all ALU operations. |
 | F | 8-bit | Flag Register. Written by ALU ops, read by branch instructions. |
-| B, C | 8-bit | Pair BC. B = loop counter idiom. C = auxiliary. |
-| D, E | 8-bit | Pair DE. Primary destination pointer (LDIR target, rectangle fill). |
-| H, L | 8-bit | Pair HL. Primary source/memory pointer (LDIR source, indirect addressing). |
+| B, C | 8-bit | Pair BC. B = loop counter idiom. C = byte counter in blit loops. |
+| D, E | 8-bit | Pair DE. Primary destination pointer (LDIR target, VRAM write). |
+| H, L | 8-bit | Pair HL. Primary source/memory pointer (LDIR source, table pointer, indirect addressing). |
 
 **16-bit pair accessors** (computed from 8-bit halves, not stored separately):
 
@@ -32,7 +32,7 @@ The emulator models a Zilog Z80 CPU connected to a flat 64 KB RAM space. The CPU
 |----------|-------|------|
 | BC() | (B<<8)\|C | Loop counter for LDIR/LDDR |
 | DE() | (D<<8)\|E | Destination pointer |
-| HL() | (H<<8)\|L | Source pointer / indirect address |
+| HL() | (H<<8)\|L | Source pointer / indirect address / table pointer |
 
 ---
 
@@ -231,6 +231,10 @@ Flags: S, Z, P updated; H=0; N=0; C=0.
 | 0xB7 | OR A | 1 |
 | 0xB0 | OR B | 1 |
 | 0xB1 | OR C | 1 |
+| 0xB2 | OR D | 1 |
+| 0xB3 | OR E | 1 |
+| 0xB4 | OR H | 1 |
+| 0xB5 | OR L | 1 |
 | 0xF6 | OR n | 2 |
 
 ### XOR r/n — bitwise XOR
@@ -257,10 +261,32 @@ Flags: H and C updated; N cleared. S and Z not affected.
 | 0x29 | ADD HL, HL | 1 |
 | 0x39 | ADD HL, SP | 1 |
 
-**Common use — advance HL by one CRTC row stride:**
+### Stack — PUSH and POP
+
+PUSH decrements SP by 2 then writes the register pair high byte first.
+POP reads two bytes from SP and increments SP by 2.
+
+| Opcode | Mnemonic | Bytes | Description |
+|--------|----------|-------|-------------|
+| 0xF5 | PUSH AF | 1 | Push A and F onto stack. |
+| 0xF1 | POP AF | 1 | Pop A and F from stack. |
+| 0xC5 | PUSH BC | 1 | Push BC onto stack. |
+| 0xC1 | POP BC | 1 | Pop BC from stack. |
+| 0xD5 | PUSH DE | 1 | Push DE onto stack. |
+| 0xD1 | POP DE | 1 | Pop DE from stack. |
+| 0xE5 | PUSH HL | 1 | Push HL onto stack. |
+| 0xE1 | POP HL | 1 | Pop HL from stack. |
+
+**Canonical register preservation during blit:**
+
 ```asm
-LD DE, 0x0050    ; one character line = 0x0050 bytes
-ADD HL, DE       ; HL now points to next character line
+PUSH HL        ; save table pointer
+LD   L, A      ; move sprite byte to L
+LD   A, (DE)   ; read background from VRAM
+AND  B         ; apply AND mask
+OR   L         ; apply sprite pixels
+LD   (DE), A   ; write back to VRAM
+POP  HL        ; restore table pointer
 ```
 
 ### Unconditional jumps
@@ -291,21 +317,33 @@ ADD HL, DE       ; HL now points to next character line
 **Displacement encoding:** backward branch of d bytes → encode `256 − d`.
 
 **Canonical counted loop:**
+
 ```asm
-        LD B, N       ; initialise counter
+       LD B, N       ; initialise counter
 LOOP:   DEC B         ; Z set when B reaches 0
-        JR NZ, LOOP   ; branch back if Z = 0
+       JR NZ, LOOP   ; branch back if Z = 0
 ```
 
-**Canonical rectangle fill inner loop:**
+**Canonical blit inner loop:**
+
 ```asm
-FILL:   LD (DE), A    ; write pixel byte
-        INC DE        ; advance VRAM pointer
-        DEC C         ; decrement byte counter
-        JR NZ, FILL   ; loop until C = 0
+BYTE:   LD B, (HL)    ; AND mask
+       INC HL
+       LD A, (HL)    ; sprite byte
+       INC HL
+       PUSH HL       ; save table pointer
+       LD L, A       ; move sprite to L
+       LD A, (DE)    ; read background
+       AND B         ; clear opaque positions
+       OR  L         ; write sprite pixels
+       LD (DE), A    ; write to VRAM
+       POP HL        ; restore table pointer
+       INC DE
+       DEC C
+       JR NZ, BYTE
 ```
 
-### Stack and subroutines
+### Subroutines
 
 | Opcode | Mnemonic | Bytes | Description |
 |--------|----------|-------|-------------|
@@ -320,12 +358,12 @@ FILL:   LD (DE), A    ; write pixel byte
 | ED B8 | LDDR | 2 | Copy (HL)→(DE); DEC HL; DEC DE; DEC BC; repeat until BC=0. |
 
 **Canonical full VRAM fill:**
+
 ```asm
 LD HL, fill_table   ; source
 LD DE, 0xC000       ; destination: VRAM base
 LD BC, 0x4000       ; count: 16384 bytes (full VRAM address space)
 LDIR
-HALT
 ```
 
 ---
@@ -335,10 +373,83 @@ HALT
 | Range | Segment | Notes |
 |-------|---------|-------|
 | 0x0000 – 0x3FFF | Program area | Binary loaded here. Execution begins at 0x0000. |
-| 0x4000 – 0x7FFF | General RAM | User data, fill tables, address tables. |
-| 0x8000 – 0xBFFF | Working RAM | Register state dumps, inter-routine data. |
+| 0x4000 – 0x7FFF | General RAM | User data, fill tables, sprite tables, address tables. |
+| 0x8000 – 0xBFFF | Working RAM | RAM scratch variables (e.g. row counter at 0x8000). |
 | 0xC000 – 0xFFFF | VRAM | 16 KB video buffer. Any write sets `vram_dirty`. Dumped after execution. |
 | 0xF000 – 0xFFFF | Stack segment | SP initialised to `0xF000`. Grows downward. Overlaps VRAM — do not use both simultaneously. |
+
+---
+
+## Sprite system
+
+### Mode 0 pixel encoding
+
+Two pixels per byte. Pen index is 4 bits (0–15), stored in a scrambled bit layout:
+
+```
+bit7=p0[0] bit6=p1[0] bit5=p0[2] bit4=p1[2]
+bit3=p0[1] bit2=p1[1] bit1=p0[3] bit0=p1[3]
+```
+
+Encode pixel pair `(pl, pr)`:
+```python
+byte = (pl[0]<<7)|(pr[0]<<6)|(pl[2]<<5)|(pr[2]<<4)|(pl[1]<<3)|(pr[1]<<2)|(pl[3]<<1)|pr[3]
+```
+
+Decode pixel 0: `pen = (b>>7&1) | ((b>>3&1)<<1) | ((b>>5&1)<<2) | ((b>>1&1)<<3)`
+
+**Verified solid pen fill bytes:**
+
+| Pen | Byte | Pen | Byte | Pen | Byte | Pen | Byte |
+|-----|------|-----|------|-----|------|-----|------|
+| 0 | 0x00 | 4 | 0x30 | 8 | 0x03 | 12 | 0x33 |
+| 1 | 0xC0 | 5 | 0xF0 | 9 | 0xC3 | 13 | 0xF3 |
+| 2 | 0x0C | 6 | 0x3C | 10 | 0x0F | 14 | 0x3F |
+| 3 | 0xCC | 7 | 0xFC | 11 | 0xCF | 15 | 0xFF |
+
+### AND mask computation
+
+For transparent pen `tp` (default pen 0):
+
+```python
+def mode0_mask(pl, pr, tp=0):
+   lt = (pl == tp); rt = (pr == tp)
+   mask = 0
+   if lt: mask |= (1<<7)|(1<<5)|(1<<3)|(1<<1)
+   if rt: mask |= (1<<6)|(1<<4)|(1<<2)|(1<<0)
+   return mask
+```
+
+Both transparent → mask `0xFF` (keep all background).
+Both opaque → mask `0x00` (clear all background before OR).
+
+### Interleaved blit table format
+
+Per sprite row (W bytes wide):
+```
+[dest_lo, dest_hi, mask_0, spr_0, mask_1, spr_1, ..., mask_(W-1), spr_(W-1)]
+```
+Total bytes per row: `2 + W*2`
+
+| Sprite | Dimensions | Bytes/row | Rows | Table size |
+|--------|------------|-----------|------|------------|
+| Alligator | 24×16 px (12 bytes wide) | 26 | 16 | 416 bytes |
+| Hero | 16×20 px (8 bytes wide) | 18 | 20 | 360 bytes |
+
+### Sprite memory layout (lesson9)
+
+| Address | Contents |
+|---------|----------|
+| 0x0100 | Background fill table (16384 bytes, solid pen 1) |
+| 0x4200 | Alligator interleaved blit table (416 bytes) |
+| 0x4400 | Hero interleaved blit table (360 bytes) |
+| 0x4600 | Ground fill table (328 bytes, solid pen 12) |
+| 0x4800 | Z80 code |
+| 0x8000 | RAM scratch: row counter (1 byte) |
+
+### Sprite orientation
+
+Sprites are designed facing right in the Python pixel grids. `mirror_sprite(grid)` applies `row[::-1]` to each row to produce a left-facing version. Alligator frames are mirrored (faces left on screen). Hero frames are used as-is (faces right on screen).
 
 ---
 
@@ -349,23 +460,16 @@ All three modes share the same CRTC addressing formula. The mode only affects ho
 ### CRTC address formula (all modes)
 
 For pixel row `y` (0–199) and byte column `x` (0–79):
+
 ```
 address = 0xC000 + (y % 8) * 0x0800 + (y / 8) * 0x0050 + x
 ```
 
-The VRAM address space is 16384 bytes. Maximum offset = `7 * 0x0800 + 24 * 0x0050 + 79 = 16335`. Fill tables and LDIR counts must use `0x4000` (16384), not `0x3E80` (16000).
+Maximum offset = `7 * 0x0800 + 24 * 0x0050 + 79 = 16335`. Fill tables and LDIR counts must use `0x4000` (16384), not `0x3E80` (16000).
 
 ### Mode 0 — 160×200, 16 colours
 
-1 byte = 2 pixels, 4-bit pen index (0–15), scrambled bit layout:
-```
-bit7=p0[0] bit6=p1[0] bit5=p0[2] bit4=p1[2]
-bit3=p0[1] bit2=p1[1] bit1=p0[3] bit0=p1[3]
-```
-
-Decode: `p0 = (b>>7&1) | (b>>5&1)<<1 | (b>>3&1)<<2 | (b>>1&1)<<3`
-
-Solid pen fill byte: `(p[0]<<7)|(p[0]<<6)|(p[2]<<5)|(p[2]<<4)|(p[1]<<3)|(p[1]<<2)|(p[3]<<1)|p[3]`
+See sprite system section above for full encoding details.
 
 **Default Mode 0 firmware palette (16 pens):**
 
@@ -391,6 +495,7 @@ Solid pen fill byte: `(p[0]<<7)|(p[0]<<6)|(p[2]<<5)|(p[2]<<4)|(p[1]<<3)|(p[1]<<2
 ### Mode 1 — 320×200, 4 colours
 
 1 byte = 4 pixels, 2-bit pen index (0–3):
+
 ```
 bit7=p0[1] bit6=p1[1] bit5=p2[1] bit4=p3[1]
 bit3=p0[0] bit2=p1[0] bit1=p2[0] bit0=p3[0]
@@ -427,6 +532,7 @@ Solid pen fill bytes: pen 0 = `0x00`, pen 1 = `0x0F`, pen 2 = `0xF0`, pen 3 = `0
 ## VRAM dump
 
 After execution, if any write targeted `0xC000–0xFFFF`, `Memory::dumpVRAM()` writes the raw 16 KB block to:
+
 ```
 programs/<name>_vram/frame_NNNN.vram
 ```
@@ -439,9 +545,16 @@ The folder is created automatically. The frame counter increments with each dump
 
 `monitor.cpp` compiles to `monitor.exe`. Watches a `_vram/` folder and renders each new `.vram` file as a live CPC frame. Completely independent from the emulator — the only interface is the `_vram/` folder.
 
+### Authentic CPC pixel aspect ratio
+
+The Schneider CPC 6128 displays Mode 0 pixels at 2:1 width-to-height on a 4:3 monitor. The monitor reproduces this with `SCALE_X=6` / `SCALE_Y=3`, giving each logical pixel a 6×3 block of screen pixels. `SDL_SetRenderScale` is not used — `render_frame` draws explicit `SDL_FRect` rectangles in raw screen coordinates so x and y can scale independently.
+
+Window size: 960×600 pixels (160×6 = 960 wide, 200×3 = 600 tall).
+
 ### SDL3 setup (Windows, one time only)
 
 Download `SDL3-devel-3.4.4-mingw.tar.gz` from `github.com/libsdl-org/SDL/releases`. Extract with 7-Zip. Then in PowerShell from the project root:
+
 ```powershell
 Copy-Item -Recurse "SDL3-devel-3.4.4-mingw\SDL3-3.4.4\x86_64-w64-mingw32\include\SDL3" -Destination "SDL3\include\SDL3" -Force
 New-Item -ItemType Directory -Force -Path "SDL3\lib"
@@ -452,32 +565,28 @@ Copy-Item "SDL3-devel-3.4.4-mingw\SDL3-3.4.4\x86_64-w64-mingw32\bin\SDL3.dll" -D
 `SDL3/` and `SDL3.dll` are in `.gitignore` — not committed.
 
 ### Build
+
 ```powershell
 g++ main.cpp    -o emulator.exe -std=c++17
 g++ monitor.cpp -o monitor.exe -I SDL3/include -L SDL3/lib -lSDL3 -std=c++17
 ```
 
-### Run
+### Run (single terminal)
 
-Open two terminals in VS Code (`Ctrl+Shift+`` ` opens a new tab).
-
-**Terminal 1 — launch monitor first, leave running:**
 ```powershell
-.\monitor.exe programs\lessonN_vram --mode 0
-.\monitor.exe programs\lessonN_vram --mode 1
-.\monitor.exe programs\lessonN_vram --mode 2
-```
-
-**Terminal 2 — run emulator:**
-```powershell
+g++ main.cpp -o emulator.exe -std=c++17
+g++ monitor.cpp -o monitor.exe -I SDL3/include -L SDL3/lib -lSDL3 -std=c++17
+python programs\gen_lessonN.py
+Remove-Item -Recurse -Force programs\lessonN_vram -ErrorAction SilentlyContinue
+Start-Process -FilePath ".\monitor.exe" -ArgumentList "programs\lessonN_vram --mode 0"
 .\emulator.exe programs\lessonN.bin
 ```
 
-The monitor renders within 200ms of the emulator finishing. If a `.vram` file already exists the monitor renders it immediately on startup.
+If the monitor window is already open, omit the `Start-Process` line — the existing window picks up the new `.vram` file automatically within 200ms.
 
 ### Window
 
-960×600 pixels (320×200 scaled ×3, nearest-neighbour). Title bar shows mode and current frame filename.
+960×600 pixels. Authentic CPC 6:3 pixel aspect ratio. Title bar shows mode and current frame filename.
 
 ### Cross-platform
 
@@ -488,6 +597,7 @@ SDL3 uses DirectX on Windows, Metal on macOS, X11/Wayland on Linux. No platform-
 ## Trace engine
 
 **Line format:**
+
 ```
 [PPPP] MNEMONIC                        | A:AA BC:BBBB DE:DDDD HL:HHHH F:FFFFFFFF [Z:z C:c]
 ```
@@ -512,16 +622,19 @@ Branch annotations: `[taken]`, `[not taken]`, `-> 0xNNNN`.
 ## Toolchain quick reference
 
 **Build everything:**
+
 ```powershell
 g++ main.cpp    -o emulator.exe -std=c++17
 g++ monitor.cpp -o monitor.exe -I SDL3/include -L SDL3/lib -lSDL3 -std=c++17
 ```
 
-**Generate, run, and view a lesson:**
+**Generate, run, and view a lesson (single terminal):**
+
 ```powershell
-python programs/gen_lessonN.py
-.\monitor.exe programs\lessonN_vram --mode 0    # terminal 1
-.\emulator.exe programs\lessonN.bin              # terminal 2
+python programs\gen_lessonN.py
+Remove-Item -Recurse -Force programs\lessonN_vram -ErrorAction SilentlyContinue
+Start-Process -FilePath ".\monitor.exe" -ArgumentList "programs\lessonN_vram --mode 0"
+.\emulator.exe programs\lessonN.bin
 ```
 
 Each `gen_lessonN.py` produces both `lessonN.bin` and `lessonN.asm`. Never edit `.asm` by hand.

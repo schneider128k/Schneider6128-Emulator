@@ -430,6 +430,26 @@ struct Z80CPU {
                      push16(mem, pc); pc = t; break; }
         case 0xC9: pc = pop16(mem); mnemonic = "RET"; break;
 
+        // === PUSH / POP ===
+        case 0xF5: push16(mem, (uint16_t)(a<<8)|f); mnemonic="PUSH AF"; break;
+        case 0xF1: { uint16_t v=pop16(mem); a=(v>>8)&0xFF; f=v&0xFF;
+                    mnemonic="POP AF"; break; }
+        case 0xC5: push16(mem, BC()); mnemonic="PUSH BC"; break;
+        case 0xC1: { setBC(pop16(mem)); mnemonic="POP BC"; break; }
+        case 0xD5: push16(mem, DE()); mnemonic="PUSH DE"; break;
+        case 0xD1: { setDE(pop16(mem)); mnemonic="POP DE"; break; }
+        case 0xE5: push16(mem, HL()); mnemonic="PUSH HL"; break;
+        case 0xE1: { setHL(pop16(mem)); mnemonic="POP HL"; break; }
+
+        // === OR with remaining registers ===
+        case 0xB2: { a=a|d; flags_or_xor(a); mnemonic="OR D";  break; }
+        case 0xB3: { a=a|e; flags_or_xor(a); mnemonic="OR E";  break; }
+        case 0xB4: { a=a|h; flags_or_xor(a); mnemonic="OR H";  break; }
+        case 0xB5: { a=a|l; flags_or_xor(a); mnemonic="OR L";  break; }
+
+        // === LD r,(HL) for B ===  (0x46 already added in Milestone 8)
+        // === LD L, A ===          (0x6F already added in Milestone 8)
+
         // === ED prefix ===
         case 0xED: step_ED(mem, trace, current_pc); return;
 

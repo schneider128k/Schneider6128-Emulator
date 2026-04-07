@@ -1,7 +1,44 @@
 # Schneider 6128 Development Log
 
-**Current Milestone:** 8.0 (Full ALU)
+**Current Milestone:** 9.0 (Sprite Blitting)
 **Hardware Specification:** [WPS-Z80 Reference Manual](REFERENCE.md)
+
+---
+
+## Lesson 9: Uncle Alligator Appears
+
+**Date:** April 2026
+**Focus:** Side-view sprite blitting with AND mask transparency and authentic CPC pixel aspect ratio.
+
+### 🧠 New Concepts
+
+- **Masked sprite blitting:** Each sprite byte is paired with an AND mask byte. The blit sequence reads background from VRAM, ANDs with the mask (clearing opaque pixel positions), ORs in the sprite byte, and writes back. This gives clean transparency — pen 0 pixels in the sprite are invisible and the background shows through.
+- **Interleaved table format:** Per sprite row: `[dest_lo, dest_hi, mask0, spr0, mask1, spr1, ..., mask(W-1), spr(W-1)]`. This keeps the VRAM destination address and sprite data together in a single linear block, avoiding the need for a separate pointer register. The blit loop reads them sequentially with `LD E,(HL)` / `LD D,(HL)` for the address, then `LD B,(HL)` / `LD A,(HL)` for each mask/sprite pair.
+- **PUSH HL / POP HL:** The masked blit needs to read the background byte from VRAM via DE while HL holds the table pointer. Since we cannot use HL for two things simultaneously, we save HL onto the stack with `PUSH HL`, do the VRAM read and composite, then restore with `POP HL`. This is the first use of the stack for register preservation rather than subroutine calls.
+- **Mode 0 mask computation:** For each pixel pair `(pl, pr)`, the mask bits are 1 where a pixel is transparent (pen 0) and 0 where opaque. Left pixel occupies bits 7,5,3,1; right pixel occupies bits 6,4,2,0. If both pixels are transparent the mask byte is `0xFF` (keep all background). If both are opaque the mask is `0x00` (clear all background before OR).
+- **Side-view sprite design:** Alligator is 24 logical pixels wide × 16 tall (12 bytes × 16 rows). Hero is 16 logical pixels wide × 20 tall (8 bytes × 20 rows). Four alligator frames (2 walk poses × 2 mouth states) and 3 hero frames (run A, run B, jump) designed and encoded. Lesson 9 blits frame 1 of each.
+- **Sprite orientation via mirroring:** Alligator pixel grids are drawn facing right internally, then `mirror_sprite()` (Python `row[::-1]`) flips each row to produce the left-facing sprite. Hero grids are drawn natively facing right. This keeps the pixel design intuitive while producing the correct screen orientation.
+- **Ground line:** A 4-row solid fill at y=148 using pen 12 (yellow-brown, `0x33`) drawn via a simple write loop — no masking needed for solid fills. Provides a clear visual horizon for both the player and the RL agent.
+- **Authentic CPC pixel aspect ratio:** The Schneider CPC 6128 displays Mode 0 pixels at 2:1 width-to-height ratio on a 4:3 monitor. `monitor.cpp` now uses `SCALE_X=6` / `SCALE_Y=3` with manual `SDL_FRect` drawing (no `SDL_SetRenderScale`) so x and y can scale independently. Result: 960×600 window with pixels that are 6×3 screen pixels — matching what the game would have looked like on real 1985 hardware.
+- **Mode 0 decode bug fixed:** The original decoder had bits 3 and 5 swapped in the pen index reconstruction. Correct formula: `pens[0] = (b>>7&1) | ((b>>3&1)<<1) | ((b>>5&1)<<2) | ((b>>1&1)<<3)`. This was discovered when pen 12 (yellow-brown ground) was rendering as pen 10 (cyan).
+
+### 🔧 Engineering Notes
+
+- Alligator interleaved table: 16 rows × 26 bytes = 416 bytes at `0x4200`.
+- Hero interleaved table: 20 rows × 18 bytes = 360 bytes at `0x4400`.
+- Ground table: 4 rows × 82 bytes = 328 bytes at `0x4600`.
+- Code at `0x4800`, RAM scratch (row counter) at `0x8000`.
+- `MAX_CYCLES = 50000` is sufficient — the blit loops complete well within this limit.
+- New opcodes used: `PUSH HL` (0xE5), `POP HL` (0xE1), `OR L` (0xB5), `LD B,(HL)` (0x46).
+
+### 📂 Program Files
+
+- [Source: gen\_lesson9.py](programs/gen_lesson9.py)
+- [Logic: lesson9.asm](programs/lesson9.asm)
+
+### ✅ Verified Output
+
+Dark blue background (pen 1), yellow-brown ground line (pen 12) at y=148, alligator sprite (green, facing left, 24×16 px) at byte col 34 row 132, hero sprite (red shirt, facing right, 16×20 px) at byte col 8 row 128. Clean transparency on both sprites. Authentic CPC 6:3 pixel aspect ratio. Rendered at 960×600.
 
 ---
 

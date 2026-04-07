@@ -9,29 +9,48 @@
 
 namespace fs = std::filesystem;
 
-constexpr int CPC_W     = 320;
-constexpr int CPC_H     = 200;
-constexpr int SCALE     = 3;
-constexpr int WINDOW_W  = CPC_W * SCALE;
-constexpr int WINDOW_H  = CPC_H * SCALE;
+/**
+ * WOCJAN PERCUSSIVE SYSTEMS - CPC MONITOR
+ * Milestone 9: Authentic CPC pixel aspect ratio
+ * ----------------------------------------------------------------------------
+ * The Schneider CPC 6128 displays on a monitor with a 4:3 aspect ratio.
+ * Mode 0 has 160x200 logical pixels but each pixel is physically 2x wider
+ * than tall on the real screen. We reproduce this with:
+ *   SCALE_X = 6  (each logical x unit = 6 screen pixels)
+ *   SCALE_Y = 3  (each logical y unit = 3 screen pixels)
+ * This gives a 960x600 window matching authentic CPC proportions.
+ *
+ * Mode 0 decode (verified):
+ *   pens[0] = (b>>7&1) | ((b>>3&1)<<1) | ((b>>5&1)<<2) | ((b>>1&1)<<3)
+ *   pens[1] = (b>>6&1) | ((b>>2&1)<<1) | ((b>>4&1)<<2) | ((b>>0&1)<<3)
+ *
+ * Solid pen encoding (verified):
+ *   pen 0=0x00 pen 1=0xC0 pen 2=0x0C pen 3=0xCC pen 4=0x30 pen 5=0xF0
+ *   pen 6=0x3C pen 7=0xFC pen 8=0x03 pen 9=0xC3 pen10=0x0F pen11=0xCF
+ *   pen12=0x33 pen13=0xF3 pen14=0x3F pen15=0xFF
+ * ----------------------------------------------------------------------------
+ */
+
+// CPC logical resolution
+constexpr int CPC_W    = 160;
+constexpr int CPC_H    = 200;
+
+// Authentic CPC pixel aspect ratio
+// Each Mode 0 logical pixel is 2x wider than tall on real hardware.
+// SCALE_X=6, SCALE_Y=3 gives 960x600 window.
+constexpr int SCALE_X  = 6;
+constexpr int SCALE_Y  = 3;
+constexpr int WINDOW_W = CPC_W * SCALE_X;   // 960
+constexpr int WINDOW_H = CPC_H * SCALE_Y;   // 600
+
 constexpr int VRAM_SIZE = 0x4000;
 constexpr int POLL_MS   = 200;
 
 struct Colour { uint8_t r, g, b; };
 
 // ---------------------------------------------------------------------------
-// Mode 1 default palette (4 pens)
-// ---------------------------------------------------------------------------
-constexpr Colour PALETTE_MODE1[4] = {
-    {  0,   0,   0},   // pen 0 — black
-    {255, 255,   0},   // pen 1 — bright yellow
-    {  0, 255, 255},   // pen 2 — bright cyan
-    {255, 255, 255},   // pen 3 — bright white
-};
-
-// ---------------------------------------------------------------------------
-// Mode 0 default palette (16 pens)
-// CPC firmware defaults, hardware RGB 3-level (0=0, half=128, full=255)
+// Mode 0 default palette — 16 pens
+// CPC hardware uses 3-level RGB: 0=0, half=128, full=255
 // ---------------------------------------------------------------------------
 constexpr Colour PALETTE_MODE0[16] = {
     {  0,   0,   0},   // pen  0 — black
@@ -53,7 +72,17 @@ constexpr Colour PALETTE_MODE0[16] = {
 };
 
 // ---------------------------------------------------------------------------
-// Mode 2 default palette (2 pens)
+// Mode 1 default palette — 4 pens
+// ---------------------------------------------------------------------------
+constexpr Colour PALETTE_MODE1[4] = {
+    {  0,   0,   0},   // pen 0 — black
+    {255, 255,   0},   // pen 1 — bright yellow
+    {  0, 255, 255},   // pen 2 — bright cyan
+    {255, 255, 255},   // pen 3 — bright white
+};
+
+// ---------------------------------------------------------------------------
+// Mode 2 default palette — 2 pens
 // ---------------------------------------------------------------------------
 constexpr Colour PALETTE_MODE2[2] = {
     {  0,   0,   0},   // pen 0 — black
@@ -61,33 +90,36 @@ constexpr Colour PALETTE_MODE2[2] = {
 };
 
 // ---------------------------------------------------------------------------
-// CRTC address formula (same for all three modes)
-// offset from 0xC000 for pixel row y (0-199), byte column x (0-79 mode1/2,
-// 0-79 mode0 since 160px / 2px-per-byte = 80 bytes)
+// CRTC address formula — identical for all three modes
+// For pixel row y (0-199) and byte column x (0-79):
+//   offset = (y % 8) * 0x0800 + (y / 8) * 0x0050 + x
 // ---------------------------------------------------------------------------
 inline int crtc_offset(int y, int x) {
     return (y % 8) * 0x0800 + (y / 8) * 0x0050 + x;
 }
 
 // ---------------------------------------------------------------------------
-// Mode 0 decoder
-// 1 byte = 2 pixels, 4 bits each, scrambled:
-// bit7=p0[0] bit6=p1[0] bit5=p0[2] bit4=p1[2]
-// bit3=p0[1] bit2=p1[1] bit1=p0[3] bit0=p1[3]
-// pen_n = bit(7-n*4+0) | bit(5-n*4+1)<<1 ... cleaner formula:
-// p0 = (b>>7&1) | (b>>5&1)<<1 | (b>>3&1)<<2 | (b>>1&1)<<3
-// p1 = (b>>6&1) | (b>>4&1)<<1 | (b>>2&1)<<2 | (b>>0&1)<<3
+// Mode 0 decoder — verified against CPC hardware bit layout
+//
+// Bit layout: bit7=p0[0] bit6=p1[0] bit5=p0[2] bit4=p1[2]
+//             bit3=p0[1] bit2=p1[1] bit1=p0[3] bit0=p1[3]
+//
+// Decode:
+//   p0 = bit7 | (bit3<<1) | (bit5<<2) | (bit1<<3)
+//   p1 = bit6 | (bit2<<1) | (bit4<<2) | (bit0<<3)
 // ---------------------------------------------------------------------------
 inline void decode_mode0(uint8_t b, uint8_t pens[2]) {
-    pens[0] = ((b>>7)&1) | (((b>>5)&1)<<1) | (((b>>3)&1)<<2) | (((b>>1)&1)<<3);
-    pens[1] = ((b>>6)&1) | (((b>>4)&1)<<1) | (((b>>2)&1)<<2) | (((b>>0)&1)<<3);
+    pens[0] = ((b>>7)&1) | (((b>>3)&1)<<1) | (((b>>5)&1)<<2) | (((b>>1)&1)<<3);
+    pens[1] = ((b>>6)&1) | (((b>>2)&1)<<1) | (((b>>4)&1)<<2) | (((b>>0)&1)<<3);
 }
 
 // ---------------------------------------------------------------------------
-// Mode 1 decoder (existing, unchanged)
-// 1 byte = 4 pixels, 2 bits each
-// bit7=p0[1] bit6=p1[1] bit5=p2[1] bit4=p3[1]
-// bit3=p0[0] bit2=p1[0] bit1=p2[0] bit0=p3[0]
+// Mode 1 decoder
+//
+// Bit layout: bit7=p0[1] bit6=p1[1] bit5=p2[1] bit4=p3[1]
+//             bit3=p0[0] bit2=p1[0] bit1=p2[0] bit0=p3[0]
+//
+// Decode pixel n: pen = ((b>>(7-n))&1)<<1 | ((b>>(3-n))&1)
 // ---------------------------------------------------------------------------
 inline void decode_mode1(uint8_t b, uint8_t pens[4]) {
     for (int n = 0; n < 4; ++n) {
@@ -98,8 +130,7 @@ inline void decode_mode1(uint8_t b, uint8_t pens[4]) {
 }
 
 // ---------------------------------------------------------------------------
-// Mode 2 decoder
-// 1 byte = 8 pixels, 1 bit each, MSB first
+// Mode 2 decoder — 8 pixels per byte, MSB first, 1 bit each
 // ---------------------------------------------------------------------------
 inline void decode_mode2(uint8_t b, uint8_t pens[8]) {
     for (int n = 0; n < 8; ++n)
@@ -107,7 +138,7 @@ inline void decode_mode2(uint8_t b, uint8_t pens[8]) {
 }
 
 // ---------------------------------------------------------------------------
-// Folder watcher
+// VRAM folder watcher — returns path of newest .vram file in folder
 // ---------------------------------------------------------------------------
 std::string newest_vram(const std::string& folder) {
     std::string newest_path;
@@ -126,24 +157,49 @@ std::string newest_vram(const std::string& folder) {
     return newest_path;
 }
 
+// ---------------------------------------------------------------------------
+// Load a .vram file into a buffer
+// ---------------------------------------------------------------------------
 bool load_vram(const std::string& path, std::vector<uint8_t>& vram) {
     std::ifstream f(path, std::ios::binary);
     if (!f.is_open()) return false;
     vram.assign(std::istreambuf_iterator<char>(f), {});
-    return vram.size() == VRAM_SIZE;
+    return (int)vram.size() == VRAM_SIZE;
 }
 
 // ---------------------------------------------------------------------------
-// Render one frame into the SDL3 renderer
+// Render one VRAM frame
+//
+// Coordinate system:
+//   SDL_SetRenderScale is NOT used — we draw explicit SDL_FRect rectangles
+//   in screen pixels so we can use different x and y scales.
+//
+// Mode 0: 160 logical pixels wide, 80 bytes per row, 2 pixels per byte.
+//   Each logical pixel renders as SCALE_X x SCALE_Y screen pixels.
+//   Byte column x, pixel index p (0 or 1):
+//     screen_x = (x * 2 + p) * SCALE_X
+//     screen_y = y * SCALE_Y
+//     rect width  = SCALE_X
+//     rect height = SCALE_Y
+//
+// Mode 1: 320 logical pixels wide, 80 bytes per row, 4 pixels per byte.
+//   Each logical pixel renders as (SCALE_X/2) x SCALE_Y screen pixels.
+//   (SCALE_X=6 → 3 screen pixels wide per Mode 1 pixel)
+//
+// Mode 2: 640 logical pixels wide, 80 bytes per row, 8 pixels per byte.
+//   Each logical pixel renders as (SCALE_X/4) x SCALE_Y screen pixels.
+//   (SCALE_X=6 → 1.5 screen pixels — rounded to nearest integer)
 // ---------------------------------------------------------------------------
 void render_frame(SDL_Renderer* renderer,
                   const std::vector<uint8_t>& vram,
                   int mode)
 {
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     SDL_RenderClear(renderer);
 
     if (mode == 0) {
-        // Mode 0: 160x200, 2 pixels per byte, 4-bit pen index
+        // Mode 0: 160x200, 16 colours, 2 pixels per byte
+        // Each pixel: SCALE_X wide x SCALE_Y tall in screen coords
         for (int y = 0; y < CPC_H; ++y) {
             for (int x = 0; x < 80; ++x) {
                 int idx = crtc_offset(y, x);
@@ -153,15 +209,21 @@ void render_frame(SDL_Renderer* renderer,
                 for (int p = 0; p < 2; ++p) {
                     const Colour& c = PALETTE_MODE0[pens[p] & 0xF];
                     SDL_SetRenderDrawColor(renderer, c.r, c.g, c.b, 255);
-                    // Each Mode 0 pixel = 2 CPC logical units wide
-                    SDL_FRect rect = { (float)(x*2 + p), (float)y, 1.0f, 1.0f };
+                    SDL_FRect rect = {
+                        (float)((x * 2 + p) * SCALE_X),
+                        (float)(y * SCALE_Y),
+                        (float)SCALE_X,
+                        (float)SCALE_Y
+                    };
                     SDL_RenderFillRect(renderer, &rect);
                 }
             }
         }
     }
     else if (mode == 1) {
-        // Mode 1: 320x200, 4 pixels per byte, 2-bit pen index
+        // Mode 1: 320x200, 4 colours, 4 pixels per byte
+        // Each pixel: (SCALE_X/2) wide x SCALE_Y tall = 3x3 screen pixels
+        constexpr int PX_W = SCALE_X / 2;   // = 3
         for (int y = 0; y < CPC_H; ++y) {
             for (int x = 0; x < 80; ++x) {
                 int idx = crtc_offset(y, x);
@@ -171,15 +233,22 @@ void render_frame(SDL_Renderer* renderer,
                 for (int p = 0; p < 4; ++p) {
                     const Colour& c = PALETTE_MODE1[pens[p] & 0x3];
                     SDL_SetRenderDrawColor(renderer, c.r, c.g, c.b, 255);
-                    SDL_FRect rect = { (float)(x*4 + p), (float)y, 1.0f, 1.0f };
+                    SDL_FRect rect = {
+                        (float)((x * 4 + p) * PX_W),
+                        (float)(y * SCALE_Y),
+                        (float)PX_W,
+                        (float)SCALE_Y
+                    };
                     SDL_RenderFillRect(renderer, &rect);
                 }
             }
         }
     }
     else if (mode == 2) {
-        // Mode 2: 640x200, 8 pixels per byte, 1-bit pen index
-        // Rendered at half width (320 logical units) to fit the window
+        // Mode 2: 640x200, 2 colours, 8 pixels per byte
+        // Each pixel: (SCALE_X/4) wide x SCALE_Y tall = 1.5 screen pixels
+        // Use float for sub-pixel accuracy
+        constexpr float PX_W = (float)SCALE_X / 4.0f;   // = 1.5f
         for (int y = 0; y < CPC_H; ++y) {
             for (int x = 0; x < 80; ++x) {
                 int idx = crtc_offset(y, x);
@@ -189,8 +258,12 @@ void render_frame(SDL_Renderer* renderer,
                 for (int p = 0; p < 8; ++p) {
                     const Colour& c = PALETTE_MODE2[pens[p] & 0x1];
                     SDL_SetRenderDrawColor(renderer, c.r, c.g, c.b, 255);
-                    // Mode 2 pixels are half the width of Mode 1 pixels
-                    SDL_FRect rect = { (float)(x*4 + p*0.5f), (float)y, 0.5f, 1.0f };
+                    SDL_FRect rect = {
+                        (float)(x * 8 + p) * PX_W,
+                        (float)(y * SCALE_Y),
+                        PX_W,
+                        (float)SCALE_Y
+                    };
                     SDL_RenderFillRect(renderer, &rect);
                 }
             }
@@ -206,9 +279,11 @@ void render_frame(SDL_Renderer* renderer,
 int main(int argc, char* argv[]) {
     if (argc < 2) {
         std::cerr << "Usage: monitor <vram_folder> [--mode 0|1|2]\n";
-        std::cerr << "  --mode 0   Mode 0: 160x200, 16 colours (default for lesson7+)\n";
-        std::cerr << "  --mode 1   Mode 1: 320x200, 4 colours  (default, lesson6)\n";
-        std::cerr << "  --mode 2   Mode 2: 640x200, 2 colours\n";
+        std::cerr << "  --mode 0   Mode 0: 160x200, 16 colours (default for lesson9+)\n";
+        std::cerr << "  --mode 1   Mode 1: 320x200,  4 colours\n";
+        std::cerr << "  --mode 2   Mode 2: 640x200,  2 colours\n";
+        std::cerr << "\nWindow: " << WINDOW_W << "x" << WINDOW_H
+                  << " (authentic CPC pixel aspect ratio " << SCALE_X << ":" << SCALE_Y << ")\n";
         return 1;
     }
 
@@ -218,9 +293,8 @@ int main(int argc, char* argv[]) {
     int mode = 1;
     for (int i = 2; i < argc; ++i) {
         std::string arg = argv[i];
-        if (arg == "--mode" && i+1 < argc) {
+        if (arg == "--mode" && i + 1 < argc)
             mode = std::stoi(argv[++i]);
-        }
     }
 
     if (mode < 0 || mode > 2) {
@@ -240,7 +314,8 @@ int main(int argc, char* argv[]) {
     }
 
     std::string title = "WPS-Z80 Monitor  |  " + mode_desc[mode];
-    SDL_Window* window = SDL_CreateWindow(title.c_str(), WINDOW_W, WINDOW_H, 0);
+    SDL_Window* window = SDL_CreateWindow(
+        title.c_str(), WINDOW_W, WINDOW_H, 0);
     if (!window) {
         std::cerr << "SDL_CreateWindow failed: " << SDL_GetError() << "\n";
         SDL_Quit(); return 1;
@@ -252,26 +327,31 @@ int main(int argc, char* argv[]) {
         SDL_DestroyWindow(window); SDL_Quit(); return 1;
     }
 
-    SDL_SetRenderScale(renderer, (float)SCALE, (float)SCALE);
+    // No SDL_SetRenderScale — we handle scaling manually in render_frame
+    // so we can use different x and y scale factors.
 
     std::string last_path;
     std::vector<uint8_t> vram;
     bool running = true;
 
+    // Clear to black on startup
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     SDL_RenderClear(renderer);
     SDL_RenderPresent(renderer);
 
     std::cout << "WPS Monitor running.\n";
     std::cout << "Watching: " << vram_folder << "\n";
     std::cout << mode_desc[mode] << "\n";
+    std::cout << "Window: " << WINDOW_W << "x" << WINDOW_H
+              << "  (CPC authentic aspect ratio)\n";
     std::cout << "Press Escape or close window to quit.\n";
 
     while (running) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
-            if (event.type == SDL_EVENT_QUIT) running = false;
+            if (event.type == SDL_EVENT_QUIT)   running = false;
             if (event.type == SDL_EVENT_KEY_DOWN &&
-                event.key.key == SDLK_ESCAPE) running = false;
+                event.key.key == SDLK_ESCAPE)   running = false;
         }
 
         std::string candidate = newest_vram(vram_folder);
@@ -281,8 +361,10 @@ int main(int argc, char* argv[]) {
                 last_path = candidate;
                 std::string fname = fs::path(candidate).filename().string();
                 SDL_SetWindowTitle(window,
-                    ("WPS-Z80 Monitor  |  " + mode_desc[mode] + "  |  " + fname).c_str());
-                std::cout << "Rendered: " << fname << " (mode " << mode << ")\n";
+                    ("WPS-Z80 Monitor  |  " + mode_desc[mode] +
+                     "  |  " + fname).c_str());
+                std::cout << "Rendered: " << fname
+                          << " (mode " << mode << ")\n";
             }
         }
 
