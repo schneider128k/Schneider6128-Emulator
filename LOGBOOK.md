@@ -1,6 +1,6 @@
 # Schneider 6128 Development Log
 
-**Current Milestone:** 6.0 (Monitor Output)
+**Current Milestone:** 6.0 (Monitor Output — Stable)
 **Hardware Specification:** [WPS-Z80 Reference Manual](REFERENCE.md)
 
 ---
@@ -8,16 +8,22 @@
 ## Lesson 6: The Monitor
 
 **Date:** April 2026
-**Focus:** VRAM output and live display using SDL3.
+**Focus:** VRAM output and live SDL3 display.
 
 ### 🧠 New Concepts
 
-- **VRAM dirty flag:** `Memory::write()` now sets `vram_dirty` whenever an address in `0xC000–0xFFFF` is written. After execution the 16 KB block is dumped to a `.vram` file.
-- **VRAM folder:** Each program gets its own `<name>_vram/` folder alongside its `.bin` file. Frames are written as `frame_0001.vram`, `frame_0002.vram`, etc.
-- **Mode 1 encoding:** 1 byte encodes 4 pixels. Bit 1 of each pen index sits in the high nibble, bit 0 in the low nibble: `p0[1] p1[1] p2[1] p3[1] | p0[0] p1[0] p2[0] p3[0]`. Solid pen bytes: pen 0 = `0x00`, pen 1 = `0x0F`, pen 2 = `0xF0`, pen 3 = `0xFF`.
-- **CRTC interleaved addressing:** The CPC does not lay out rows top-to-bottom linearly. For pixel row `y` (0–199) and byte column `x` (0–79): `address = 0xC000 + (y % 8) * 0x0800 + (y / 8) * 0x0050 + x`.
-- **SDL3 monitor:** `monitor.cpp` compiles to a standalone `monitor.exe`. It watches the `_vram/` folder, decodes each new `.vram` file, and renders it into a 960×600 SDL3 window (320×200 scaled 3×) using nearest-neighbour filtering for sharp CPC pixels. Cross-platform: Win32/DirectX on Windows, Metal on Mac, X11/Wayland on Linux — no platform-specific code in `monitor.cpp`.
-- **Authentic palette:** The four default Mode 1 firmware pens: black `(0,0,0)`, bright yellow `(255,255,0)`, bright cyan `(0,255,255)`, bright white `(255,255,255)`.
+- **VRAM dirty flag:** `Memory::write()` sets `vram_dirty` on any write to `0xC000–0xFFFF`. After execution the full 16 KB block is dumped to disk.
+- **VRAM folder convention:** Each program gets its own `<name>_vram/` folder alongside its `.bin` file. Frames are named `frame_0001.vram`, `frame_0002.vram`, etc. The folder is created automatically by the emulator.
+- **Mode 1 byte encoding:** 1 byte = 4 pixels, 2 bits per pixel. Bit 1 of each pen index sits in the high nibble, bit 0 in the low nibble. Solid pen fill bytes: pen 0 = `0x00`, pen 1 = `0x0F`, pen 2 = `0xF0`, pen 3 = `0xFF`.
+- **CRTC interleaved addressing:** The CPC lays out pixel rows in an 8-way interleave, not top-to-bottom linearly. For pixel row `y` (0–199) and byte column `x` (0–79): `address = 0xC000 + (y % 8) * 0x0800 + (y / 8) * 0x0050 + x`. Verified by direct byte inspection of the `.vram` dump.
+- **SDL3 monitor:** `monitor.cpp` compiles to a standalone `monitor.exe`. It watches a `_vram/` folder, decodes each new `.vram` file using the CRTC formula and Mode 1 decoder, and renders it into a 960×600 window (320×200 scaled ×3). Uses `SDL_SetRenderScale` + `SDL_SetRenderDrawColor` + `SDL_RenderFillRect` — SDL3 handles all colour format translation internally with no platform-specific pixel format constants.
+- **Authentic CPC palette:** Default Mode 1 firmware pens: black `(0,0,0)`, bright yellow `(255,255,0)`, bright cyan `(0,255,255)`, bright white `(255,255,255)`.
+- **MAX_CYCLES raised to 5000:** Lesson 6 writes 200 rows × 9 instructions = 1800 instructions. The previous limit of 1000 was too low and caused the white stripe to be missing. Raised to 5000 to accommodate VRAM-writing programs.
+
+### 🔧 Engineering Notes
+
+- Initial monitor implementation used `SDL_CreateTexture` with `SDL_PIXELFORMAT_RGBA8888`. This produced incorrect colours (magenta, wrong channel order) because SDL3's native pixel format on Windows does not match the byte order we write. Fixed by switching to direct renderer drawing: `SDL_SetRenderScale` sets the 3× scale factor, `SDL_SetRenderDrawColor` sets the colour, and `SDL_RenderFillRect` draws each CPC pixel as a 1×1 logical unit that SDL3 scales internally.
+- The VRAM formula was verified correct by inspecting raw bytes at key offsets: row 0 offset `0x0000` = `0x00`, row 50 offset `0x11E0` = `0x0F`, row 100 offset `0x23C0` = `0xF0`, row 150 offset `0x35A0` = `0xFF`.
 
 ### 📂 Program Files
 
@@ -25,9 +31,9 @@
 - [Logic: lesson6.asm](programs/lesson6.asm)
 - [Monitor: monitor.cpp](monitor.cpp)
 
-### ✅ Test
+### ✅ Verified Output
 
-Expected display: four horizontal stripes each 50 rows tall — black (top), bright yellow, bright cyan, bright white (bottom). Confirms correct CRTC address decoding and Mode 1 pixel encoding.
+Four horizontal stripes visible in the monitor window, each 50 rows tall. From top to bottom: black, bright yellow, bright cyan, bright white. Stripes cover the left 32 pixels of each row (8 bytes × 4 pixels). The rest of the screen is black — full-screen fill requires `LDIR` (Milestone 7).
 
 ---
 

@@ -1,6 +1,6 @@
 # WPS-Z80 Technical Reference
 
-**Revision:** 6.0 — Milestone 6 (Monitor Output)
+**Revision:** 6.1 — Milestone 6 Stable
 **Project:** Schneider CPC 6128 Emulation Layer
 **Links:** [LOGBOOK.md](LOGBOOK.md) · [README.md](README.md)
 
@@ -10,7 +10,7 @@
 
 ![WPS-Z80 architecture diagram](docs/wps_z80_architecture.svg)
 
-The emulator models a Zilog Z80 CPU connected to a flat 64 KB RAM space. The CPU fetches opcodes from the program area, executes them, and logs every step to a `.trace` file. The Branch Logic unit reads the Flag Register (F) to decide whether a conditional jump is taken. After execution, if any write touched the VRAM region (`0xC000–0xFFFF`), the 16 KB block is dumped to a `.vram` file for the monitor.
+The emulator models a Zilog Z80 CPU connected to a flat 64 KB RAM space. The CPU fetches opcodes from the program area, executes them, and logs every step to a `.trace` file. The Branch Logic unit reads the Flag Register (F) to decide whether a conditional jump is taken. After execution, if any write touched `0xC000–0xFFFF`, the 16 KB VRAM block is dumped to a `.vram` file which the monitor reads and renders.
 
 ---
 
@@ -144,7 +144,7 @@ LOOP:   DEC B         ; decrement; Z set when B reaches 0
 
 ### VRAM layout
 
-The Gate Array reads 16 KB from `0xC000–0xFFFF`. The CRTC does not address rows linearly — it uses an 8-way interleave designed for character-cell text mode. For absolute pixel row `y` (0–199) and byte column `x` (0–79):
+The Gate Array reads 16 KB from `0xC000–0xFFFF`. The CRTC uses an 8-way interleave designed for character-cell text mode. For absolute pixel row `y` (0–199) and byte column `x` (0–79):
 ```
 address = 0xC000 + (y % 8) * 0x0800 + (y / 8) * 0x0050 + x
 ```
@@ -172,14 +172,12 @@ Solid-colour fill bytes (all 4 pixels the same pen):
 
 ### Default Mode 1 firmware palette
 
-The CPC hardware uses a 3-level RGB palette (0, 128, 255 per channel). The firmware assigns these four pens at boot:
-
-| Pen | Firmware colour | Name | RGB |
-|-----|----------------|------|-----|
-| 0 | 1 | Black | (0, 0, 0) |
-| 1 | 24 | Bright yellow | (255, 255, 0) |
-| 2 | 20 | Bright cyan | (0, 255, 255) |
-| 3 | 6 | Bright white | (255, 255, 255) |
+| Pen | Name | RGB |
+|-----|------|-----|
+| 0 | Black | (0, 0, 0) |
+| 1 | Bright yellow | (255, 255, 0) |
+| 2 | Bright cyan | (0, 255, 255) |
+| 3 | Bright white | (255, 255, 255) |
 
 ---
 
@@ -190,36 +188,55 @@ After execution, if any write targeted `0xC000–0xFFFF`, `Memory::dumpVRAM()` w
 programs/<name>_vram/frame_NNNN.vram
 ```
 
-The folder is created automatically. The frame counter increments with each dump, supporting future multi-frame output.
+The folder is created automatically. The frame counter increments with each dump.
 
 ---
 
-## Monitor (monitor.cpp → monitor.exe)
+## Monitor
 
-A standalone SDL3 application that watches a `_vram/` folder and renders each new `.vram` file as a live CPC Mode 1 frame.
+`monitor.cpp` compiles to a standalone `monitor.exe`. It watches a `_vram/` folder for new `.vram` files and renders each one as a live CPC Mode 1 frame. The monitor and emulator are completely independent — the only interface between them is the `_vram/` folder.
 
-**Window:** 960×600 (320×200 scaled ×3, nearest-neighbour — sharp pixels).
+### SDL3 setup (Windows, one time only)
 
-**Build:**
-```bat
+Download `SDL3-devel-3.4.4-mingw.tar.gz` from `github.com/libsdl-org/SDL/releases`. Extract it (requires 7-Zip for the `.tar.gz`). Then run these commands from the project root in PowerShell:
+```powershell
+Copy-Item -Recurse "SDL3-devel-3.4.4-mingw\SDL3-3.4.4\x86_64-w64-mingw32\include\SDL3" -Destination "SDL3\include\SDL3" -Force
+New-Item -ItemType Directory -Force -Path "SDL3\lib"
+Copy-Item "SDL3-devel-3.4.4-mingw\SDL3-3.4.4\x86_64-w64-mingw32\lib\libSDL3.dll.a" -Destination "SDL3\lib\" -Force
+Copy-Item "SDL3-devel-3.4.4-mingw\SDL3-3.4.4\x86_64-w64-mingw32\bin\SDL3.dll" -Destination "." -Force
+```
+
+`SDL3/` and `SDL3.dll` are listed in `.gitignore` and are not committed to the repo.
+
+### Build
+```powershell
 g++ monitor.cpp -o monitor.exe -I SDL3/include -L SDL3/lib -lSDL3 -std=c++17
+g++ main.cpp -o emulator.exe -std=c++17
 ```
 
-**SDL3 setup (Windows, one time):**
-Download `SDL3-devel-3.4.4-mingw.tar.gz` from github.com/libsdl-org/SDL/releases. Extract and copy:
-- `x86_64-w64-mingw32/include/SDL3/` → `SDL3/include/SDL3/`
-- `x86_64-w64-mingw32/lib/libSDL3.dll.a` → `SDL3/lib/`
-- `x86_64-w64-mingw32/bin/SDL3.dll` → project root
+### Run
 
-`SDL3/` and `SDL3.dll` are in `.gitignore` — not committed to the repo.
+Open two terminals in VS Code (`Ctrl+Shift+`` ` opens a new terminal tab).
 
-**Run:**
-```bat
-.\monitor.exe programs\lesson6_vram\   # terminal 1 — leave running
-.\emulator.exe programs\lesson6.bin    # terminal 2
+**Terminal 1 — launch the monitor first and leave it running:**
+```powershell
+.\monitor.exe programs\lesson6_vram
 ```
 
-**Cross-platform:** SDL3 uses DirectX 11/12 on Windows, Metal on macOS, X11/Wayland on Linux. No platform-specific code in `monitor.cpp`.
+**Terminal 2 — run the emulator:**
+```powershell
+.\emulator.exe programs\lesson6.bin
+```
+
+The monitor window opens immediately showing a black screen. It updates within 200ms of the emulator finishing. If a `.vram` file already exists in the folder, the monitor renders it immediately on startup without needing to run the emulator again.
+
+### Window
+
+960×600 pixels (320×200 scaled ×3, nearest-neighbour — sharp CPC pixels). Title bar shows the current frame filename.
+
+### Cross-platform notes
+
+SDL3 uses DirectX 11/12 on Windows, Metal on macOS, and X11/Wayland on Linux. There is no platform-specific code in `monitor.cpp`. On Linux/macOS, install SDL3 via the system package manager and compile with `$(sdl3-config --cflags --libs)` instead of the manual `-I/-L` flags.
 
 ---
 
@@ -249,25 +266,26 @@ Branch annotations:
 | `[not taken]` | Condition false; execution falls through. |
 | `-> 0xNNNN` | Resolved destination for relative jumps (JR). |
 
-**Safety limit:** Execution halts after 1000 cycles (`MAX_CYCLES`). This guard must not be removed.
+**Safety limit:** Execution halts after `MAX_CYCLES` cycles (currently 5000). This guard must not be removed.
 
 ---
 
-## Toolchain
+## Toolchain quick reference
 
-**Compile everything:**
-```bat
+**Build everything:**
+```powershell
 g++ main.cpp -o emulator.exe -std=c++17
 g++ monitor.cpp -o monitor.exe -I SDL3/include -L SDL3/lib -lSDL3 -std=c++17
 ```
 
-**Assemble and run a lesson:**
-```bat
-python programs/gen_lessonN.py
-.\emulator.exe programs\lessonN.bin
+**Generate, run, and view a lesson:**
+```powershell
+python programs/gen_lessonN.py          # generates lessonN.bin + lessonN.asm
+.\monitor.exe programs\lessonN_vram     # terminal 1 — launch first, leave running
+.\emulator.exe programs\lessonN.bin     # terminal 2 — produces trace + vram dump
 ```
 
-Each `gen_lessonN.py` produces both `lessonN.bin` (raw binary) and `lessonN.asm` (annotated listing). Never edit `.asm` files by hand.
+Each `gen_lessonN.py` is the single source of truth for its program. It produces both `lessonN.bin` (raw binary for the emulator) and `lessonN.asm` (human-readable annotated listing). Never edit `.asm` files by hand.
 
 ---
 
