@@ -8,7 +8,7 @@ A C++17 emulation of the Zilog Z80 CPU targeting the Schneider/Amstrad CPC 6128 
 
 ## The Vision: AI & Reinforcement Learning
 
-The goal of this project is to create a lightweight, modular emulator that can be wrapped in a **Python Gymnasium environment**. This will allow Reinforcement Learning agents to play 8-bit games by processing the video buffer and memory states as observations.
+The goal of this project is to build a lightweight, modular CPC 6128 emulator that exposes the raw pixel buffer as an observation space for Reinforcement Learning agents. Rather than relying on hand-crafted features or game state variables, the agent learns entirely from pixels — the same visual information a human player would see. The emulator is designed to be wrapped in a Python Gymnasium environment, enabling standard deep RL algorithms such as DQN to discover game-playing strategies directly from screen frames.
 
 ## Project Architecture
 
