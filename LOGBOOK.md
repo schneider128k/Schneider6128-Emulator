@@ -1,7 +1,36 @@
 # Schneider 6128 Development Log
 
-**Current Milestone:** 6.0 (Monitor Output — Stable)
+**Current Milestone:** 7.0 (Full Register Set + LDIR + All Three Video Modes)
 **Hardware Specification:** [WPS-Z80 Reference Manual](REFERENCE.md)
+
+---
+
+## Lesson 7: Full Screen
+
+**Date:** April 2026
+**Focus:** Full register set, LDIR block copy, and all three CPC video modes.
+
+### 🧠 New Concepts
+
+- **Complete register file:** Added C, D, E, H, L completing the three 16-bit pairs BC, DE, HL. Pairs are accessed via computed accessors `BC()`, `DE()`, `HL()` and set via `setBC()`, `setDE()`, `setHL()`. The pair values are derived from the 8-bit halves — not stored separately — which is architecturally correct and means `INC H` and `INC HL` affect the same underlying bytes.
+- **HL as memory pointer:** HL is the Z80's primary indirect addressing register. `LD (HL), A` stores A at the address held in HL. `LD A, (HL)` loads A from that address. `INC HL` advances the pointer to the next byte. This is the foundation for all sprite blitting and screen filling.
+- **LDIR (ED B0):** Load, Increment, Repeat. Copies BC bytes from (HL) to (DE), incrementing both pointers and decrementing BC each iteration until BC reaches zero. In one instruction it fills the entire 16 KB VRAM in a single Z80 operation — what previously required 16,000 individual `LD (nn), A` instructions now takes one `LDIR`. This is the canonical CPC screen-clearing instruction.
+- **LDDR (ED B8):** Same as LDIR but decrements HL and DE — copies a block backwards. Useful for overlapping memory regions.
+- **0xED prefix:** The extended opcode family. When the emulator fetches `0xED` it reads a second byte and dispatches again. This prefix unlocks a large family of Z80 instructions that cannot fit in the single-byte opcode space.
+- **Mode 0 video (160×200, 16 colours):** The primary mode for Uncle Alligator and game development. One byte encodes 2 pixels with a scrambled 4-bit pen index. The bit layout is the most complex of the three modes. Default firmware palette has 16 colours from the CPC's 27-colour 3-level RGB palette.
+- **Mode 2 video (640×200, 2 colours):** Highest resolution mode. One byte encodes 8 pixels at 1 bit each (MSB first). Useful for text and UI overlays.
+- **`--mode N` flag:** The monitor now accepts `--mode 0`, `--mode 1`, or `--mode 2` as a command-line argument. Default is mode 1 for backward compatibility with Lesson 6.
+- **VRAM fill table bug:** The CRTC interleave means some VRAM offsets exceed 16000. The fill table must be 16384 bytes (full VRAM address space), and `LD BC` must be `0x4000` not `0x3E80`. Fixed in gen_lesson7.py.
+
+### 📂 Program Files
+
+- [Source: gen\_lesson7.py](programs/gen_lesson7.py)
+- [Logic: lesson7.asm](programs/lesson7.asm)
+- [Monitor: monitor.cpp](monitor.cpp)
+
+### ✅ Verified Output
+
+Full 960×600 monitor window filled edge to edge with 16 horizontal colour bands in Mode 0, each approximately 12–13 rows tall. All 16 firmware palette colours visible. No black lines or gaps.
 
 ---
 
