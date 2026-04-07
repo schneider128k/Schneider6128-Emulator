@@ -1,7 +1,42 @@
 # Schneider 6128 Development Log
 
-**Current Milestone:** 7.0 (Full Register Set + LDIR + All Three Video Modes)
+**Current Milestone:** 8.0 (Full ALU)
 **Hardware Specification:** [WPS-Z80 Reference Manual](REFERENCE.md)
+
+---
+
+## Lesson 8: The ALU
+
+**Date:** April 2026
+**Focus:** Full arithmetic and logic unit — runtime address arithmetic and rectangle drawing.
+
+### 🧠 New Concepts
+
+- **ADD A, r/n:** 8-bit addition into A. Sets S, Z, H, C; clears N. Used for address offset computation and pixel value arithmetic.
+- **SUB r/n:** 8-bit subtraction from A. Sets S, Z, H, C; sets N. Note: `SUB A` always produces zero with Z=1, C=0 — a fast way to clear A while setting flags.
+- **AND r/n:** Bitwise AND with A. Sets S, Z, P (parity); H=1; clears N, C. Essential for masking pen bits and extracting pixel values from VRAM bytes.
+- **OR r/n:** Bitwise OR with A. Sets S, Z, P; clears H, N, C. Used for compositing pixel data.
+- **XOR r/n:** Bitwise XOR with A. Sets S, Z, P; clears H, N, C. `XOR A` (opcode `0xAF`) is the canonical Z80 idiom for zeroing A and setting Z=1 in a single byte — every real CPC program uses it.
+- **ADD HL, rr:** 16-bit addition into HL. Updates C and clears N only — does not touch S or Z. Used for advancing VRAM row pointers by one character line stride (`0x0050`) or one pixel row stride (`0x0800`).
+- **Parity flag (P/V):** Now correctly computed for AND/OR/XOR operations. P=1 if the number of set bits in the result is even.
+- **ALU flag helpers:** `flags_add()`, `flags_sub()`, `flags_and()`, `flags_or_xor()` — factored out of the switch to keep flag logic DRY and auditable.
+- **LD (DE), A / LD A, (DE):** Store and load via DE pointer. Used in the rectangle fill loop alongside `INC DE`.
+- **LD r, (HL) for all registers:** `LD D, (HL)` and `LD E, (HL)` added (previously missing), completing the full set of indirect loads from HL into any 8-bit register.
+- **MAX_CYCLES raised to 50000:** The rectangle fill loop is 80 rows × 40 bytes × 4 instructions = 12,800 steps. Previous limit of 5000 was insufficient.
+
+### 🔧 Engineering Notes
+
+- `SUB A` had a subtle self-reference bug: `flags_sub` reads `a` as the minuend to compute carry, but the operand is also `a`. Fixed by saving `old = a` before the call.
+- The rectangle address table (80 × 2 bytes) at `0x4100` precomputes CRTC row addresses for the rectangle rows. The main loop reads these with `LD E, (HL)` / `LD D, (HL)` / `INC HL` pairs — the first real use of runtime pointer dereferencing into DE.
+
+### 📂 Program Files
+
+- [Source: gen\_lesson8.py](programs/gen_lesson8.py)
+- [Logic: lesson8.asm](programs/lesson8.asm)
+
+### ✅ Verified Output
+
+Green screen (pen 9) with a bright red rectangle (pen 6) drawn at runtime using address arithmetic. No precomputed pixel table for the rectangle — CRTC addresses computed from a row address table, pixels written via `LD (DE), A` loop.
 
 ---
 
