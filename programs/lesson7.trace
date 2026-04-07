@@ -1,0 +1,8 @@
+--- WPS-Z80 NEURAL TRACE: .\programs\lesson7.bin ---
+[0000] LD HL, 0x0100                  | A:00 BC:0000 DE:0000 HL:0100 F:00000000 [Z:0 C:0]
+[0003] LD DE, 0xC000                  | A:00 BC:0000 DE:C000 HL:0100 F:00000000 [Z:0 C:0]
+[0006] LD BC, 0x4000                  | A:00 BC:4000 DE:C000 HL:0100 F:00000000 [Z:0 C:0]
+[0009] LDIR                           | A:00 BC:0000 DE:0000 HL:4100 F:01000000 [Z:1 C:0]
+[000B] HALT                           | A:00 BC:0000 DE:0000 HL:4100 F:01000000 [Z:1 C:0]
+--- VRAM dumped: .\programs\lesson7_vram ---
+--- Execution Finished ---
