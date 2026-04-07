@@ -218,7 +218,7 @@ int main(int argc, char* argv[]) {
     cpu.log(traceFile, "--- WPS-Z80 NEURAL TRACE: " + binPath + " ---");
 
     int cycles = 0;
-    const int MAX_CYCLES = 1000;   // raised for lesson6 (fills 16KB VRAM)
+    const int MAX_CYCLES = 5000;   // raised for lesson6 (fills 16KB VRAM)
 
     while (!cpu.halted && cycles < MAX_CYCLES) {
         cpu.step(mem, traceFile);
