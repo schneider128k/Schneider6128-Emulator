@@ -276,9 +276,9 @@ HERO_DATA_B       = 0x4490   # 320 bytes  → ends at 0x45D0
 GROUND_TABLE      = 0x45D0   # 328 bytes  → ends at 0x4718
 CODE_START        = 0x4720
 
-ALIG_X_ADDR       = 0x8000
-HERO_X_ADDR       = 0x8001
-FRAME_CTR_ADDR    = 0x8002
+ALIG_X_ADDR       = 0xB000
+HERO_X_ADDR       = 0xB001
+FRAME_CTR_ADDR    = 0xB002
 
 # Sanity checks
 assert ALIG_ROW_ADDRS + len(alig_row_addrs) <= HERO_ROW_ADDRS
@@ -408,8 +408,8 @@ def djnz_back(target_offset):
 # This is the standard CPC approach: RAM as extra registers.
 # ---------------------------------------------------------------------------
 
-SPR_PTR_LO   = 0x8003
-SPR_PTR_HI   = 0x8004
+SPR_PTR_LO   = 0xB003
+SPR_PTR_HI   = 0xB004
 BYTES_PR_ROW = 0x8005   # bytes_per_row constant saved here for inner loop reload
 
 def emit_subroutine_masked_blit():
@@ -422,7 +422,7 @@ def emit_subroutine_masked_blit():
       A   = x byte-column
       B   = row count
       C   = bytes_per_row
-      (0x8003/0x8004) = sprite data pointer (set by caller)
+      (0xB003/0xB004) = sprite data pointer (set by caller)
     """
     global asm
     sub_offset = len(code)
@@ -448,7 +448,7 @@ def emit_subroutine_masked_blit():
     # but we consumed A above for bytes_per_row. So caller writes x_col to
     # a dedicated RAM cell instead.
     # RAM 0x8006 = x_col for current sprite (set by caller)
-    X_COL_SCRATCH = 0x8006
+    X_COL_SCRATCH = 0xB006
     emit([0x3A, X_COL_SCRATCH & 0xFF, (X_COL_SCRATCH >> 8) & 0xFF])  # LD A, (X_COL)
     emit([0x7B])                                                        # LD A, E  (oops — overwrites)
     # Correction: we need to add x_col to E without losing x_col.
@@ -493,10 +493,10 @@ def emit_subroutine_masked_blit():
 code.clear()
 asm.clear()
 
-SPR_PTR_LO   = 0x8003
-SPR_PTR_HI   = 0x8004
-BYTES_PR_SAVE= 0x8005
-X_COL_SCRATCH= 0x8006
+SPR_PTR_LO   = 0xB003
+SPR_PTR_HI   = 0xB004
+BYTES_PR_SAVE= 0xB005
+X_COL_SCRATCH= 0xB006
 
 def emit_blit_block(row_addr_table, spr_data_addr,
                     row_count, bytes_per_row, x_col_addr,
@@ -517,7 +517,7 @@ def emit_blit_block(row_addr_table, spr_data_addr,
       DE  = VRAM destination (base_row_addr + x_col, computed per row)
       B   = row counter (DJNZ)
       C   = byte counter (inner loop, reloaded each row)
-      0x8003/0x8004 = current sprite data pointer (blit only)
+      0xB003/0xB004 = current sprite data pointer (blit only)
     """
     global asm
     asm.append(f"\n  ; --- {label} ---")
@@ -739,8 +739,8 @@ def emit_blit_block(row_addr_table, spr_data_addr,
 
         # Save outer row counter B to RAM before inner loop clobbers it.
         # The inner loop uses LD B,(HL) for mask bytes, destroying B.
-        # We use a dedicated RAM cell: ROW_CTR_SAVE = 0x8008
-        ROW_CTR_SAVE = 0x8008
+        # We use a dedicated RAM cell: ROW_CTR_SAVE = 0xB008
+        ROW_CTR_SAVE = 0xB008
         emit([0x78],             "LD A, B  ; save row counter")
         emit([0x32, ROW_CTR_SAVE & 0xFF, (ROW_CTR_SAVE >> 8) & 0xFF],
              "LD (ROW_CTR_SAVE), A")
@@ -829,7 +829,7 @@ asm.append(f"  .frame_loop:  ; 0x{abs_addr(frame_loop):04X}")
 # We need to preserve B across the per-frame work.
 # Strategy: save B (frame counter) to RAM at the start of each frame,
 # restore it just before DJNZ.
-FRAME_COUNTER_B = 0x8007   # dedicated RAM cell for the frame-loop B register
+FRAME_COUNTER_B = 0xB007   # dedicated RAM cell for the frame-loop B register
 emit([0x78])                                                              # LD A, B
 emit([0x32, FRAME_COUNTER_B & 0xFF, (FRAME_COUNTER_B >> 8) & 0xFF])     # LD (FRAME_COUNTER_B), A
 
