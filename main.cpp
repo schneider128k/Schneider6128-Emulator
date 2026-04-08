@@ -13,22 +13,26 @@
 
 /**
  * WOCJAN PERCUSSIVE SYSTEMS - Z80 CORE UNIT
- * Milestone 8: Full ALU (ADD, SUB, AND, OR, XOR, ADD HL rr)
+ * Milestone 10: Movement — sprite erase/redraw loop, multi-frame VRAM dump
  * ----------------------------------------------------------------------------
  * Flag Register (F) bit layout:
  *   Bit 7: S (Sign)        Bit 6: Z (Zero)    Bit 4: H (Half-Carry)
  *   Bit 2: P/V (Parity)    Bit 1: N (Add/Sub)  Bit 0: C (Carry)
  * ----------------------------------------------------------------------------
- * Milestone 8 Additions:
- *   ADD A, r/n    — 8-bit add; sets S, Z, H, C; clears N
- *   SUB r/n       — 8-bit subtract; sets S, Z, H, C; sets N
- *   AND r/n       — bitwise AND; sets S, Z, P; sets H; clears N, C
- *   OR  r/n       — bitwise OR;  sets S, Z, P; clears H, N, C
- *   XOR r/n       — bitwise XOR; sets S, Z, P; clears H, N, C
- *   ADD HL, rr    — 16-bit add; updates C only; clears N
- *   LD D/E, (HL)  — indirect loads into D and E
- *   LD (DE), A    — store A at address in DE
- *   LD A, (DE)    — load A from address in DE
+ * Milestone 10 Additions:
+ *   OUT (n), A    — 0xD3: frame-sync hook; dumps VRAM mid-execution.
+ *                   Port byte n is fetched and ignored (reserved for M14 RL
+ *                   state emission on port 1). Port 0 = frame sync.
+ *   DJNZ e        — 0x10: DEC B then JR NZ e in a single opcode.
+ *                   Canonical Z80 tight loop counter. Saves one byte vs
+ *                   the DEC B / JR NZ pair.
+ * ----------------------------------------------------------------------------
+ * Milestone 10 Changes:
+ *   MAX_CYCLES raised to 1,000,000 — 48 animation frames each requiring
+ *     a full background fill plus two sprite blits.
+ *   --notrace flag — pass as second argument to suppress trace output.
+ *     Trace is still produced by default for debugging single frames.
+ *     For animation runs (48 frames) the trace would be enormous; suppress it.
  * ----------------------------------------------------------------------------
  */
 
@@ -69,6 +73,7 @@ struct Memory {
     }
 
     // Dump the 16KB VRAM block to <vram_dir>/frame_NNNN.vram
+    // Called both mid-execution (OUT hook) and at end of run.
     void dumpVRAM(const std::string& vram_dir) {
         if (!vram_dirty) return;
         std::ostringstream fname;
@@ -114,8 +119,8 @@ struct Z80CPU {
         return ss.str();
     }
 
-    void log(std::ostream& os, const std::string& msg) {
-        std::cout << msg << std::endl;
+    void log(std::ostream& os, const std::string& msg, bool do_trace) {
+        if (do_trace) std::cout << msg << std::endl;
         os << msg << "\n";
     }
 
@@ -146,7 +151,6 @@ struct Z80CPU {
 
     // --- ALU flag helpers ---
 
-    // Flags for 8-bit ADD: S, Z, H, C, clears N
     void flags_add(uint8_t operand, uint16_t result) {
         setFlag(FLAG_S, (result & 0x80) != 0);
         setFlag(FLAG_Z, (result & 0xFF) == 0);
@@ -155,8 +159,6 @@ struct Z80CPU {
         setFlag(FLAG_N,  false);
     }
 
-    // Flags for 8-bit SUB/CP: S, Z, H, C, sets N
-    // NOTE: call before modifying A
     void flags_sub(uint8_t operand, uint16_t result) {
         setFlag(FLAG_S, (result & 0x80) != 0);
         setFlag(FLAG_Z, (result & 0xFF) == 0);
@@ -165,7 +167,6 @@ struct Z80CPU {
         setFlag(FLAG_N,  true);
     }
 
-    // Flags for AND: S, Z, P; H=1; N=0, C=0
     void flags_and(uint8_t result) {
         setFlag(FLAG_S, (result & 0x80) != 0);
         setFlag(FLAG_Z,  result == 0);
@@ -175,7 +176,6 @@ struct Z80CPU {
         setFlag(FLAG_C,  false);
     }
 
-    // Flags for OR/XOR: S, Z, P; H=0; N=0, C=0
     void flags_or_xor(uint8_t result) {
         setFlag(FLAG_S, (result & 0x80) != 0);
         setFlag(FLAG_Z,  result == 0);
@@ -205,7 +205,8 @@ struct Z80CPU {
     }
 
     // --- ED prefix handler ---
-    void step_ED(Memory& mem, std::ostream& trace, uint16_t current_pc) {
+    void step_ED(Memory& mem, std::ostream& trace,
+                 uint16_t current_pc, bool do_trace) {
         uint8_t op2 = fetch(mem);
         std::string mnemonic;
 
@@ -250,11 +251,13 @@ struct Z80CPU {
            << " F:" << std::bitset<8>(f)
            << " [Z:" << (flagZ() ? '1' : '0')
            << " C:" << (flagC() ? '1' : '0') << "]";
-        log(trace, ss.str());
+        log(trace, ss.str(), do_trace);
     }
 
     // --- Main instruction cycle ---
-    void step(Memory& mem, std::ostream& trace) {
+    // vram_dir and mem are both passed so OUT can trigger a mid-run dump.
+    void step(Memory& mem, std::ostream& trace,
+              const std::string& vram_dir, bool do_trace) {
         if (halted) return;
         uint16_t current_pc = pc;
         uint8_t  opcode     = fetch(mem);
@@ -326,20 +329,35 @@ struct Z80CPU {
         case 0x2B: setHL(HL() - 1); mnemonic = "DEC HL"; break;
 
         // === 8-bit Inc/Dec ===
-        case 0x3C: a++; setFlag(FLAG_Z,a==0); setFlag(FLAG_S,(a&0x80)!=0); mnemonic="INC A"; break;
-        case 0x04: b++; setFlag(FLAG_Z,b==0); setFlag(FLAG_S,(b&0x80)!=0); mnemonic="INC B"; break;
-        case 0x0C: c++; setFlag(FLAG_Z,c==0); setFlag(FLAG_S,(c&0x80)!=0); mnemonic="INC C"; break;
-        case 0x14: d++; setFlag(FLAG_Z,d==0); setFlag(FLAG_S,(d&0x80)!=0); mnemonic="INC D"; break;
-        case 0x1C: e++; setFlag(FLAG_Z,e==0); setFlag(FLAG_S,(e&0x80)!=0); mnemonic="INC E"; break;
-        case 0x24: h++; setFlag(FLAG_Z,h==0); setFlag(FLAG_S,(h&0x80)!=0); mnemonic="INC H"; break;
-        case 0x2C: l++; setFlag(FLAG_Z,l==0); setFlag(FLAG_S,(l&0x80)!=0); mnemonic="INC L"; break;
-        case 0x05: b--; setFlag(FLAG_Z,b==0); setFlag(FLAG_S,(b&0x80)!=0); mnemonic="DEC B"; break;
-        case 0x0D: c--; setFlag(FLAG_Z,c==0); setFlag(FLAG_S,(c&0x80)!=0); mnemonic="DEC C"; break;
-        case 0x15: d--; setFlag(FLAG_Z,d==0); setFlag(FLAG_S,(d&0x80)!=0); mnemonic="DEC D"; break;
-        case 0x1D: e--; setFlag(FLAG_Z,e==0); setFlag(FLAG_S,(e&0x80)!=0); mnemonic="DEC E"; break;
-        case 0x25: h--; setFlag(FLAG_Z,h==0); setFlag(FLAG_S,(h&0x80)!=0); mnemonic="DEC H"; break;
-        case 0x2D: l--; setFlag(FLAG_Z,l==0); setFlag(FLAG_S,(l&0x80)!=0); mnemonic="DEC L"; break;
-        case 0x3D: a--; setFlag(FLAG_Z,a==0); setFlag(FLAG_S,(a&0x80)!=0); mnemonic="DEC A"; break;
+        case 0x3C: a++; setFlag(FLAG_Z,a==0); setFlag(FLAG_S,(a&0x80)!=0); setFlag(FLAG_N,false); mnemonic="INC A"; break;
+        case 0x04: b++; setFlag(FLAG_Z,b==0); setFlag(FLAG_S,(b&0x80)!=0); setFlag(FLAG_N,false); mnemonic="INC B"; break;
+        case 0x0C: c++; setFlag(FLAG_Z,c==0); setFlag(FLAG_S,(c&0x80)!=0); setFlag(FLAG_N,false); mnemonic="INC C"; break;
+        case 0x14: d++; setFlag(FLAG_Z,d==0); setFlag(FLAG_S,(d&0x80)!=0); setFlag(FLAG_N,false); mnemonic="INC D"; break;
+        case 0x1C: e++; setFlag(FLAG_Z,e==0); setFlag(FLAG_S,(e&0x80)!=0); setFlag(FLAG_N,false); mnemonic="INC E"; break;
+        case 0x24: h++; setFlag(FLAG_Z,h==0); setFlag(FLAG_S,(h&0x80)!=0); setFlag(FLAG_N,false); mnemonic="INC H"; break;
+        case 0x2C: l++; setFlag(FLAG_Z,l==0); setFlag(FLAG_S,(l&0x80)!=0); setFlag(FLAG_N,false); mnemonic="INC L"; break;
+        case 0x05: b--; setFlag(FLAG_Z,b==0); setFlag(FLAG_S,(b&0x80)!=0); setFlag(FLAG_N,true);  mnemonic="DEC B"; break;
+        case 0x0D: c--; setFlag(FLAG_Z,c==0); setFlag(FLAG_S,(c&0x80)!=0); setFlag(FLAG_N,true);  mnemonic="DEC C"; break;
+        case 0x15: d--; setFlag(FLAG_Z,d==0); setFlag(FLAG_S,(d&0x80)!=0); setFlag(FLAG_N,true);  mnemonic="DEC D"; break;
+        case 0x1D: e--; setFlag(FLAG_Z,e==0); setFlag(FLAG_S,(e&0x80)!=0); setFlag(FLAG_N,true);  mnemonic="DEC E"; break;
+        case 0x25: h--; setFlag(FLAG_Z,h==0); setFlag(FLAG_S,(h&0x80)!=0); setFlag(FLAG_N,true);  mnemonic="DEC H"; break;
+        case 0x2D: l--; setFlag(FLAG_Z,l==0); setFlag(FLAG_S,(l&0x80)!=0); setFlag(FLAG_N,true);  mnemonic="DEC L"; break;
+        case 0x3D: a--; setFlag(FLAG_Z,a==0); setFlag(FLAG_S,(a&0x80)!=0); setFlag(FLAG_N,true);  mnemonic="DEC A"; break;
+
+        // === DJNZ e — DEC B; JR NZ e (single opcode, no flags written for B) ===
+        // Canonical Z80 tight loop counter. B is decremented silently (no flags),
+        // then if B != 0 the signed displacement is added to PC.
+        case 0x10: {
+            int8_t o = static_cast<int8_t>(fetch(mem));
+            b--;
+            if (b != 0) {
+                pc = static_cast<uint16_t>(static_cast<int32_t>(pc) + o);
+                mnemonic = "DJNZ -> 0x" + to_hex(pc) + " [B=" + to_hex(b,2) + "]";
+            } else {
+                mnemonic = "DJNZ [B=0, not taken]";
+            }
+            break;
+        }
 
         // === ADD A, r/n ===
         case 0x87: { uint16_t r=(uint16_t)a+a; flags_add(a,r); a=(uint8_t)r; mnemonic="ADD A, A"; break; }
@@ -447,11 +465,23 @@ struct Z80CPU {
         case 0xB4: { a=a|h; flags_or_xor(a); mnemonic="OR H";  break; }
         case 0xB5: { a=a|l; flags_or_xor(a); mnemonic="OR L";  break; }
 
-        // === LD r,(HL) for B ===  (0x46 already added in Milestone 8)
-        // === LD L, A ===          (0x6F already added in Milestone 8)
+        // === OUT (n), A — frame-sync hook ===
+        // The emulator intercepts this as a signal to dump VRAM immediately.
+        // Port byte n is fetched and ignored (reserved for future use).
+        //   Port 0: frame sync (used here in M10)
+        //   Port 1: RL state emission (reserved for M14)
+        // This mirrors the real CPC's use of OUT for hardware I/O without
+        // requiring a full I/O bus implementation.
+        case 0xD3: {
+            uint8_t port = fetch(mem);
+            mem.dumpVRAM(vram_dir);
+            mnemonic = "OUT (0x" + to_hex(port,2) + "), A  [VRAM frame " +
+                       std::to_string(mem.vram_frame) + " dumped]";
+            break;
+        }
 
         // === ED prefix ===
-        case 0xED: step_ED(mem, trace, current_pc); return;
+        case 0xED: step_ED(mem, trace, current_pc, do_trace); return;
 
         default:
             mnemonic = "UNKNOWN: 0x" + to_hex(opcode, 2);
@@ -462,7 +492,7 @@ struct Z80CPU {
         // --- Trace output ---
         std::stringstream ss;
         ss << "[" << to_hex(current_pc) << "] "
-           << std::left << std::setw(30) << mnemonic
+           << std::left << std::setw(38) << mnemonic
            << " | A:" << to_hex(a, 2)
            << " BC:" << to_hex(BC(), 4)
            << " DE:" << to_hex(DE(), 4)
@@ -470,18 +500,26 @@ struct Z80CPU {
            << " F:" << std::bitset<8>(f)
            << " [Z:" << (flagZ() ? '1' : '0')
            << " C:" << (flagC() ? '1' : '0') << "]";
-        log(trace, ss.str());
+        log(trace, ss.str(), do_trace);
     }
 };
 
 // ---------------------------------------------------------------------------
 int main(int argc, char* argv[]) {
     if (argc < 2) {
-        std::cout << "Usage: ./emulator <programs/filename.bin>" << std::endl;
+        std::cout << "Usage: ./emulator <programs/filename.bin> [--notrace]" << std::endl;
         return 1;
     }
 
     std::string binPath = argv[1];
+
+    // --notrace suppresses stdout and skips writing the .trace file.
+    // Use for animation runs where trace volume would be enormous.
+    bool do_trace = true;
+    for (int i = 2; i < argc; i++) {
+        if (std::string(argv[i]) == "--notrace") do_trace = false;
+    }
+
     Memory  mem;
     Z80CPU  cpu;
 
@@ -490,28 +528,44 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Derive trace path: programs/lesson8.bin -> programs/lesson8.trace
+    // Derive trace path: programs/lesson10.bin -> programs/lesson10.trace
     std::string tracePath = binPath;
     size_t lastDot = tracePath.find_last_of(".");
     if (lastDot != std::string::npos) tracePath = tracePath.substr(0, lastDot);
     tracePath += ".trace";
 
-    std::ofstream traceFile(tracePath);
-    if (!traceFile.is_open()) return 1;
+    // For --notrace we still open a stream but redirect to /dev/null equivalent
+    std::ofstream traceFile;
+    std::ofstream nullFile;
+    std::ostream* traceOut = nullptr;
 
-    cpu.log(traceFile, "--- WPS-Z80 NEURAL TRACE: " + binPath + " ---");
-
-    int cycles = 0;
-    const int MAX_CYCLES = 50000;
-
-    while (!cpu.halted && cycles < MAX_CYCLES) {
-        cpu.step(mem, traceFile);
-        cycles++;
+    if (do_trace) {
+        traceFile.open(tracePath);
+        if (!traceFile.is_open()) return 1;
+        traceOut = &traceFile;
+    } else {
+        // Write a minimal stub trace so the file exists but isn't huge
+        traceFile.open(tracePath);
+        if (traceFile.is_open()) {
+            traceFile << "--- WPS-Z80 TRACE SUPPRESSED (--notrace): "
+                      << binPath << " ---\n";
+            traceFile.close();
+        }
+        // Use a null sink for the rest of execution
+        nullFile.open(
+#ifdef _WIN32
+            "NUL"
+#else
+            "/dev/null"
+#endif
+        );
+        traceOut = &nullFile;
     }
 
-    if (cycles >= MAX_CYCLES) cpu.log(traceFile, "--- Safety Limit Reached ---");
+    if (do_trace)
+        cpu.log(*traceOut, "--- WPS-Z80 NEURAL TRACE: " + binPath + " ---", true);
 
-    // Derive VRAM folder: programs/lesson8.bin -> programs/lesson8_vram/
+    // Derive VRAM folder: programs/lesson10.bin -> programs/lesson10_vram/
     std::string vramDir = binPath;
     size_t dot = vramDir.find_last_of(".");
     if (dot != std::string::npos) vramDir = vramDir.substr(0, dot);
@@ -523,10 +577,28 @@ int main(int argc, char* argv[]) {
         mkdir(vramDir.c_str(), 0755);
     #endif
 
-    mem.dumpVRAM(vramDir);
-    if (mem.vram_frame > 0)
-        cpu.log(traceFile, "--- VRAM dumped: " + vramDir + " ---");
+    int cycles = 0;
+    const int MAX_CYCLES = 1000000;
 
-    cpu.log(traceFile, "--- Execution Finished ---");
+    while (!cpu.halted && cycles < MAX_CYCLES) {
+        cpu.step(mem, *traceOut, vramDir, do_trace);
+        cycles++;
+    }
+
+    if (cycles >= MAX_CYCLES)
+        cpu.log(*traceOut, "--- Safety Limit Reached ---", do_trace);
+
+    // Final dump for any remaining dirty VRAM (e.g. single-frame programs
+    // that use HALT instead of OUT to end).
+    mem.dumpVRAM(vramDir);
+
+    std::string summary = "--- Execution Finished: " +
+        std::to_string(cycles) + " cycles, " +
+        std::to_string(mem.vram_frame) + " VRAM frame(s) dumped to " +
+        vramDir + " ---";
+
+    cpu.log(*traceOut, summary, do_trace);
+    if (!do_trace) std::cout << summary << std::endl;
+
     return 0;
 }

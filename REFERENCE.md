@@ -1,6 +1,6 @@
 # WPS-Z80 Technical Reference
 
-**Revision:** 9.0 — Milestone 9 (Sprite Blitting)
+**Revision:** 10.0 — Milestone 10 (Movement)
 **Project:** Schneider CPC 6128 Emulation Layer
 **Links:** [LOGBOOK.md](LOGBOOK.md) · [README.md](README.md)
 
@@ -8,9 +8,9 @@
 
 ## Architecture overview
 
-![WPS-Z80 architecture diagram](docs/wps_z80_architecture.svg)
-
 The emulator models a Zilog Z80 CPU connected to a flat 64 KB RAM space. The CPU fetches opcodes from the program area, executes them, and logs every step to a `.trace` file. The Branch Logic unit reads the Flag Register (F) to decide whether conditional jumps are taken. After execution, if any write touched `0xC000–0xFFFF`, the 16 KB VRAM block is dumped to a `.vram` file for the monitor. The monitor decodes the VRAM using the selected video mode (0, 1, or 2) and renders it live at authentic CPC pixel proportions.
+
+The `OUT (n), A` instruction (0xD3) is intercepted as a **frame-sync hook**: it triggers an immediate mid-execution VRAM dump without halting the program. This allows Z80 programs to produce multiple frames in a single run.
 
 ---
 
@@ -19,7 +19,7 @@ The emulator models a Zilog Z80 CPU connected to a flat 64 KB RAM space. The CPU
 | Register | Width | Role |
 |----------|-------|------|
 | PC | 16-bit | Program Counter. Points to the next opcode byte. Auto-increments on every fetch. |
-| SP | 16-bit | Stack Pointer. Initialise to `0xF000`. Decrements on PUSH, increments on POP. |
+| SP | 16-bit | Stack Pointer. Initialised to `0xF000`. Decrements on PUSH, increments on POP. |
 | A | 8-bit | Accumulator. Primary operand for all ALU operations. |
 | F | 8-bit | Flag Register. Written by ALU ops, read by branch instructions. |
 | B, C | 8-bit | Pair BC. B = loop counter idiom. C = byte counter in blit loops. |
@@ -64,6 +64,7 @@ Bit layout: `S Z — H — P/V N C` (MSB to LSB).
 | ADD HL, rr | — | — | updated | — | 0 | updated | 16-bit; S/Z not affected |
 | LDIR / LDDR | — | — | 0 | 0 | 0 | — | P/V=0 when BC=0 |
 | INC/DEC rr | — | — | — | — | — | — | 16-bit ops; no flags |
+| DJNZ e | — | — | — | — | — | — | B decremented silently; no flags |
 
 ---
 
@@ -343,6 +344,24 @@ BYTE:   LD B, (HL)    ; AND mask
        JR NZ, BYTE
 ```
 
+### DJNZ — decrement and jump if non-zero
+
+| Opcode | Mnemonic | Bytes | Description |
+|--------|----------|-------|-------------|
+| 0x10 | DJNZ e | 2 | Decrement B (no flags affected). If B ≠ 0, add signed displacement e to PC. |
+
+**Key property:** B is decremented silently — no flags are written. This means DJNZ does not disturb the Zero or Carry flags, unlike `DEC B` / `JR NZ`.
+
+**Displacement range:** signed 8-bit, so ±127 bytes from the end of the instruction. When the loop body exceeds 127 bytes, use `DEC B` / `JP NZ nn` instead (3-byte absolute jump, unlimited range).
+
+**Canonical tight loop:**
+
+```asm
+       LD B, N        ; initialise counter
+LOOP:   ...            ; loop body (must be ≤ 127 bytes for DJNZ)
+       DJNZ LOOP      ; DEC B; branch back if B ≠ 0
+```
+
 ### Subroutines
 
 | Opcode | Mnemonic | Bytes | Description |
@@ -366,6 +385,40 @@ LD BC, 0x4000       ; count: 16384 bytes (full VRAM address space)
 LDIR
 ```
 
+### I/O — OUT instruction
+
+| Opcode | Mnemonic | Bytes | Description |
+|--------|----------|-------|-------------|
+| 0xD3 | OUT (n), A | 2 | Output A to I/O port n. In this emulator, intercepted as a **frame-sync hook**: triggers an immediate VRAM dump to `frame_NNNN.vram` without halting execution. |
+
+**Port conventions (WPS-Z80):**
+
+| Port | Use |
+|------|-----|
+| 0x00 | Frame sync — dump current VRAM as next animation frame. Used in M10+. |
+| 0x01 | RL state emission — reserved for M14 (Gymnasium wrapper). |
+
+**Canonical multi-frame loop:**
+
+```asm
+FRAME:  ...             ; erase sprites
+        ...             ; update positions
+        ...             ; blit sprites
+        OUT (0), A      ; signal emulator: dump this frame
+        DJNZ FRAME      ; next frame (or DEC B / JP NZ if loop > 127 bytes)
+```
+
+**Runtime X-offset pattern** (add byte-column offset to a base VRAM row address in DE):
+
+```asm
+LD A, (x_col)   ; load X byte-column from RAM
+ADD A, E        ; add to low byte of VRAM address
+LD E, A         ; store result
+JR NC, skip     ; if no carry, D is unchanged
+INC D           ; else carry propagates into high byte
+skip:
+```
+
 ---
 
 ## Memory map
@@ -374,8 +427,8 @@ LDIR
 |-------|---------|-------|
 | 0x0000 – 0x3FFF | Program area | Binary loaded here. Execution begins at 0x0000. |
 | 0x4000 – 0x7FFF | General RAM | User data, fill tables, sprite tables, address tables. |
-| 0x8000 – 0xBFFF | Working RAM | RAM scratch variables (e.g. row counter at 0x8000). |
-| 0xC000 – 0xFFFF | VRAM | 16 KB video buffer. Any write sets `vram_dirty`. Dumped after execution. |
+| 0x8000 – 0xBFFF | Working RAM | RAM scratch variables. See per-lesson memory layouts in LOGBOOK. |
+| 0xC000 – 0xFFFF | VRAM | 16 KB video buffer. Any write sets `vram_dirty`. Dumped on `OUT (0),A` or at HALT. |
 | 0xF000 – 0xFFFF | Stack segment | SP initialised to `0xF000`. Grows downward. Overlaps VRAM — do not use both simultaneously. |
 
 ---
@@ -413,39 +466,51 @@ For transparent pen `tp` (default pen 0):
 
 ```python
 def mode0_mask(pl, pr, tp=0):
-   lt = (pl == tp); rt = (pr == tp)
-   mask = 0
-   if lt: mask |= (1<<7)|(1<<5)|(1<<3)|(1<<1)
-   if rt: mask |= (1<<6)|(1<<4)|(1<<2)|(1<<0)
-   return mask
+    lt = (pl == tp); rt = (pr == tp)
+    mask = 0
+    if lt: mask |= (1<<7)|(1<<5)|(1<<3)|(1<<1)
+    if rt: mask |= (1<<6)|(1<<4)|(1<<2)|(1<<0)
+    return mask
 ```
 
 Both transparent → mask `0xFF` (keep all background).
 Both opaque → mask `0x00` (clear all background before OR).
 
-### Interleaved blit table format
+### Sprite data table format (M10+)
 
-Per sprite row (W bytes wide):
+From Milestone 10, sprite data tables contain only pixel data — no VRAM addresses:
+
+```
+[mask_0, spr_0, mask_1, spr_1, ..., mask_(W-1), spr_(W-1)]   × H rows
+```
+
+Total bytes: `H × W × 2` where W = sprite width in bytes.
+
+VRAM addresses are computed at runtime from a separate **row-address table** plus the current X byte-column (stored in RAM).
+
+### Row-address table format (M10+)
+
+One entry per sprite row:
+```
+[addr_lo, addr_hi]   × H rows
+```
+
+Stores the base VRAM address for each row at x=0. Generated at Python assembly time from the fixed Y coordinate. Total bytes: `H × 2`.
+
+### Interleaved blit table format (M9 only)
+
+Used in Lesson 9 only — superseded by separate data/address tables in M10:
 ```
 [dest_lo, dest_hi, mask_0, spr_0, mask_1, spr_1, ..., mask_(W-1), spr_(W-1)]
 ```
 Total bytes per row: `2 + W*2`
 
-| Sprite | Dimensions | Bytes/row | Rows | Table size |
-|--------|------------|-----------|------|------------|
-| Alligator | 24×16 px (12 bytes wide) | 26 | 16 | 416 bytes |
-| Hero | 16×20 px (8 bytes wide) | 18 | 20 | 360 bytes |
+### Sprite dimensions
 
-### Sprite memory layout (lesson9)
-
-| Address | Contents |
-|---------|----------|
-| 0x0100 | Background fill table (16384 bytes, solid pen 1) |
-| 0x4200 | Alligator interleaved blit table (416 bytes) |
-| 0x4400 | Hero interleaved blit table (360 bytes) |
-| 0x4600 | Ground fill table (328 bytes, solid pen 12) |
-| 0x4800 | Z80 code |
-| 0x8000 | RAM scratch: row counter (1 byte) |
+| Sprite | Logical size | Bytes wide | Rows | Data table (M10) |
+|--------|-------------|------------|------|-----------------|
+| Alligator | 24×16 px | 12 | 16 | 384 bytes/frame |
+| Hero | 16×20 px | 8 | 20 | 320 bytes/frame |
 
 ### Sprite orientation
 
@@ -531,10 +596,10 @@ Solid pen fill bytes: pen 0 = `0x00`, pen 1 = `0x0F`, pen 2 = `0xF0`, pen 3 = `0
 
 ## VRAM dump
 
-After execution, if any write targeted `0xC000–0xFFFF`, `Memory::dumpVRAM()` writes the raw 16 KB block to:
+After any `OUT (0), A` instruction, or at end of execution if VRAM is dirty, `Memory::dumpVRAM()` writes the raw 16 KB block to:
 
 ```
-programs/<name>_vram/frame_NNNN.vram
+programs/<n>_vram/frame_NNNN.vram
 ```
 
 The folder is created automatically. The frame counter increments with each dump.
@@ -543,13 +608,44 @@ The folder is created automatically. The frame counter increments with each dump
 
 ## Monitor
 
-`monitor.cpp` compiles to `monitor.exe`. Watches a `_vram/` folder and renders each new `.vram` file as a live CPC frame. Completely independent from the emulator — the only interface is the `_vram/` folder.
+`monitor.cpp` compiles to `monitor.exe`. Completely independent from the emulator — the only interface is the `_vram/` folder.
+
+### Operating modes
+
+```
+monitor.exe <vram_folder> [--mode 0|1|2] [--play] [--fps N] [--loop] [--export-png <dir>]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--mode N` | 1 | Video mode: 0 = Mode 0, 1 = Mode 1, 2 = Mode 2 |
+| `--play` | off | Playback: cycle through frames in sorted order at `--fps` rate |
+| `--fps N` | 12 | Playback frame rate (1–60). Ignored in live-watch mode. |
+| `--loop` | off | Loop back to frame 1 after the last frame. Playback only. |
+| `--export-png <dir>` | off | Export all `.vram` files as 24-bit BMP images to `<dir>`. No window opened. Prints ffmpeg commands on completion. |
+
+**Keyboard:** `Escape` = quit. `Space` = step one frame (playback mode only).
 
 ### Authentic CPC pixel aspect ratio
 
 The Schneider CPC 6128 displays Mode 0 pixels at 2:1 width-to-height on a 4:3 monitor. The monitor reproduces this with `SCALE_X=6` / `SCALE_Y=3`, giving each logical pixel a 6×3 block of screen pixels. `SDL_SetRenderScale` is not used — `render_frame` draws explicit `SDL_FRect` rectangles in raw screen coordinates so x and y can scale independently.
 
 Window size: 960×600 pixels (160×6 = 960 wide, 200×3 = 600 tall).
+
+### BMP export and GIF/MP4 pipeline
+
+`--export-png` renders each `.vram` file to a 24-bit BMP (standard Windows BMP format, no external libraries). ffmpeg reads these directly:
+
+```powershell
+# Animated GIF for README (half size, high quality palette)
+ffmpeg -framerate 12 -i "programs\lessonN_bmp\frame_%04d.bmp" `
+  -vf "scale=480:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse" `
+  -loop 0 lessonN.gif
+
+# MP4 for releases/issues (very small file)
+ffmpeg -framerate 12 -i "programs\lessonN_bmp\frame_%04d.bmp" `
+  -vf scale=480:-1 -c:v libx264 -pix_fmt yuv420p lessonN.mp4
+```
 
 ### SDL3 setup (Windows, one time only)
 
@@ -571,26 +667,32 @@ g++ main.cpp    -o emulator.exe -std=c++17
 g++ monitor.cpp -o monitor.exe -I SDL3/include -L SDL3/lib -lSDL3 -std=c++17
 ```
 
-### Run (single terminal)
+### Run (PowerShell)
 
 ```powershell
-g++ main.cpp -o emulator.exe -std=c++17
-g++ monitor.cpp -o monitor.exe -I SDL3/include -L SDL3/lib -lSDL3 -std=c++17
+# Generate program
 python programs\gen_lessonN.py
+
+# Clear old frames, open monitor, run emulator
 Remove-Item -Recurse -Force programs\lessonN_vram -ErrorAction SilentlyContinue
 Start-Process -FilePath ".\monitor.exe" -ArgumentList "programs\lessonN_vram --mode 0"
-.\emulator.exe programs\lessonN.bin
+.\emulator.exe programs\lessonN.bin --notrace
+
+# Play back animation
+.\monitor.exe programs\lessonN_vram --mode 0 --play --fps 12 --loop
+
+# Export frames for GIF/MP4
+.\monitor.exe programs\lessonN_vram --mode 0 --export-png programs\lessonN_bmp
 ```
 
-If the monitor window is already open, omit the `Start-Process` line — the existing window picks up the new `.vram` file automatically within 200ms.
+---
 
-### Window
+## Emulator flags
 
-960×600 pixels. Authentic CPC 6:3 pixel aspect ratio. Title bar shows mode and current frame filename.
-
-### Cross-platform
-
-SDL3 uses DirectX on Windows, Metal on macOS, X11/Wayland on Linux. No platform-specific code in `monitor.cpp`. On Linux/macOS compile with `$(sdl3-config --cflags --libs)`.
+| Flag | Description |
+|------|-------------|
+| (none) | Run with full trace output to stdout and `.trace` file. |
+| `--notrace` | Suppress trace. Writes a one-line stub `.trace`. Prints cycle/frame summary to stdout. Use for multi-frame animation runs. |
 
 ---
 
@@ -615,7 +717,7 @@ SDL3 uses DirectX on Windows, Metal on macOS, X11/Wayland on Linux. No platform-
 
 Branch annotations: `[taken]`, `[not taken]`, `-> 0xNNNN`.
 
-**Safety limit:** Execution halts after `MAX_CYCLES` cycles (currently 50000). Must not be removed.
+**Safety limit:** Execution halts after `MAX_CYCLES` cycles (currently 1,000,000). Must not be removed.
 
 ---
 
@@ -628,13 +730,13 @@ g++ main.cpp    -o emulator.exe -std=c++17
 g++ monitor.cpp -o monitor.exe -I SDL3/include -L SDL3/lib -lSDL3 -std=c++17
 ```
 
-**Generate, run, and view a lesson (single terminal):**
+**Generate, run, and view a lesson:**
 
 ```powershell
 python programs\gen_lessonN.py
 Remove-Item -Recurse -Force programs\lessonN_vram -ErrorAction SilentlyContinue
 Start-Process -FilePath ".\monitor.exe" -ArgumentList "programs\lessonN_vram --mode 0"
-.\emulator.exe programs\lessonN.bin
+.\emulator.exe programs\lessonN.bin --notrace
 ```
 
 Each `gen_lessonN.py` produces both `lessonN.bin` and `lessonN.asm`. Never edit `.asm` by hand.

@@ -1,7 +1,70 @@
 # Schneider 6128 Development Log
 
-**Current Milestone:** 9.0 (Sprite Blitting)
+**Current Milestone:** 10.0 (Movement)
 **Hardware Specification:** [WPS-Z80 Reference Manual](REFERENCE.md)
+
+---
+
+## Lesson 10: Uncle Alligator Moves
+
+**Date:** April 2026
+**Focus:** Sprite movement — erase/redraw loop, runtime X position, 48 VRAM frames, animation playback.
+
+### 🧠 New Concepts
+
+- **Multi-frame VRAM output:** The emulator now dumps multiple `.vram` files during a single run. Each call to `OUT (0), A` triggers an immediate VRAM dump mid-execution, producing a numbered frame file (`frame_0001.vram`, `frame_0002.vram`, …). The emulator no longer waits until HALT to dump — the dump is driven by the Z80 program itself.
+- **`OUT (n), A` (0xD3) — frame-sync hook:** The Z80 `OUT` instruction is intercepted by the emulator as a signal to dump the current VRAM. Port byte `n` is fetched and ignored (reserved: port 0 = frame sync used here; port 1 = RL state emission reserved for M14). This mirrors real CPC hardware where `OUT` drives the I/O bus, without requiring a full I/O bus implementation.
+- **`DJNZ e` (0x10) — tight loop counter:** Decrements B silently (no flags affected), then jumps if B ≠ 0. Saves one byte and one cycle vs the `DEC B` / `JR NZ` pair. Used in all inner erase and blit loops. Note: when the loop body exceeds 128 bytes, DJNZ's ±127 displacement range is insufficient — the outer frame loop (432 bytes) uses `DEC B` / `JP NZ` instead, which has unlimited range.
+- **Runtime X position:** In Lesson 9, VRAM destination addresses were baked into the interleaved sprite tables at Python assembly time. In Lesson 10 they are computed at runtime. Sprite data tables hold only `(mask, sprite_byte)` pairs — no addresses. A separate **row-address table** stores the base VRAM address for each sprite row at x=0 (computed once from fixed Y). At blit time the Z80 reads the base address and adds the current X byte-column: `LD A, (x_col)` / `ADD A, E` / `LD E, A` / `JR NC, +1` / `INC D`. This is the canonical Z80 16-bit pointer offset pattern.
+- **Sprite data pointer in RAM:** The blit inner loop uses HL for the sprite data pointer, but PUSH/POP can only preserve one HL at a time (the outer loop uses it for the row-address table). The sprite data pointer is therefore persisted across rows in two RAM bytes (`0x8003`/`0x8004`), reconstructed into HL at the start of each row's inner loop via `LD A,(SPR_PTR_LO)` / `LD L, A` / `LD A,(SPR_PTR_HI)` / `LD H, A`, and saved back after.
+- **B register preservation:** The blit inner loop uses `LD B, (HL)` to load the AND mask byte, which clobbers B — the same register DJNZ uses as the outer row counter. B is therefore saved to RAM cell `0x8008` before the inner loop and restored after. This is a classic Z80 register-pressure pattern: RAM as extra registers.
+- **Sprite erase:** Before redrawing a sprite at its new position, the previous position is erased by writing `BG_BYTE` (solid pen 1, `0xC0`) to every VRAM byte the sprite occupied. The erase loop reuses the same row-address table and X byte-column as the blit loop — no separate erase data is needed.
+- **Animation cycle:** The alligator alternates between walk frames A and B every 4 display frames (controlled by bit 2 of a frame counter stored at `0x8002`). The hero alternates between run frames A and B on the same schedule. Frame selection uses `AND 0x04` / `JP NZ` / `JP Z` pairs to dispatch to the correct sprite data block.
+- **`--notrace` flag:** At 48 frames the trace file would be enormous (~373,000 instructions). The new `--notrace` flag suppresses trace output entirely, writing only a one-line stub. The emulator prints a summary to stdout regardless: cycle count and frame count.
+- **Monitor playback mode:** `monitor.exe` gains three new flags: `--play` (cycle through all frames in sorted order), `--fps N` (frame rate, default 12), `--loop` (wrap back to frame 1). Space bar steps one frame at a time. The window title bar shows `[frame/total]  N fps  LOOP`.
+- **BMP export and GIF/MP4 pipeline:** `--export-png <dir>` exports all `.vram` files to 24-bit BMP images (no external libraries — pure C++ BMP writer). `ffmpeg` then converts these to an animated GIF (81KB at 480×300) for the GitHub README, and an MP4 (8KB) for releases. The monitor prints the exact ffmpeg commands after export.
+
+### 🔧 Engineering Notes
+
+- **Fill table placement bug (fixed):** The initial VRAM fill table was placed at `0x0100`, spanning 16384 bytes to `0x4100`. This overlapped the sprite data tables at `0x4000`, corrupting row-address tables and sprite data. Fixed by moving the fill table to `0x6000`.
+- **B register clobbering bug (fixed):** The blit inner loop used `LD B,(HL)` for mask bytes, destroying B which DJNZ used as the outer row counter. After the inner loop B held the last mask byte value (e.g. `0xFF`) instead of the remaining row count, causing the outer loop to run ~255 extra iterations per frame and burning the entire 1,000,000-cycle budget on the first frame. Fixed by saving/restoring B around the inner loop.
+- **Frame loop range:** The frame loop body is 432 bytes — outside DJNZ's ±127 range. Uses `DEC B` / `JP NZ` with a 16-bit absolute target instead.
+- **Binary size:** 41216 bytes (fill table at `0x6000` + 16384 bytes requires a larger binary than M9).
+- **Cycle budget:** 48 frames complete in 373,048 cycles, well within `MAX_CYCLES = 1,000,000`.
+- **Known limitation:** The alligator and hero sprites pass through each other when they meet near the centre of the screen. There is no collision detection in M10 — this is intentional. Collision detection, lives, and game-over logic are introduced in M12.
+
+### 📐 Memory Layout (Lesson 10)
+
+| Address | Contents |
+|---------|----------|
+| 0x0000 | `JP 0x4720` (reset vector) |
+| 0x4000 | Alligator row-address table (32 bytes: 16 rows × 2 bytes) |
+| 0x4020 | Hero row-address table (40 bytes: 20 rows × 2 bytes) |
+| 0x4050 | Alligator sprite data — walk A (384 bytes) |
+| 0x41D0 | Alligator sprite data — walk B (384 bytes) |
+| 0x4350 | Hero sprite data — run A (320 bytes) |
+| 0x4490 | Hero sprite data — run B (320 bytes) |
+| 0x45D0 | Ground fill table (328 bytes) |
+| 0x4720 | Z80 code (485 bytes) |
+| 0x6000 | Background fill table (16384 bytes, solid pen 1) |
+| 0x8000 | RAM: `alig_x` byte-column (1 byte) |
+| 0x8001 | RAM: `hero_x` byte-column (1 byte) |
+| 0x8002 | RAM: `frame_ctr` animation toggle (1 byte) |
+| 0x8003–0x8004 | RAM: sprite data pointer lo/hi |
+| 0x8005 | RAM: bytes-per-row scratch |
+| 0x8006 | RAM: x-column scratch for current blit |
+| 0x8007 | RAM: frame-loop B counter save |
+| 0x8008 | RAM: row-loop B counter save (inner blit) |
+
+### 📂 Program Files
+
+- [Source: gen\_lesson10.py](programs/gen_lesson10.py)
+- [Logic: lesson10.asm](programs/lesson10.asm)
+- [Animation: lesson10.gif](lesson10.gif)
+
+### ✅ Verified Output
+
+48 VRAM frames dumped in 373,048 cycles. Alligator starts at byte col 60 (pixel 120), moves left 1 byte-column per frame. Hero starts at byte col 8 (pixel 16), moves right 1 byte-column per frame. Walk cycle alternates A/B every 4 frames. Ground line remains fixed throughout. Sprites pass through each other near frame 26 (no collision detection yet — see M12). Exported to `lesson10.gif` (81KB, 480×300, 12fps) and `lesson10.mp4` (8KB).
 
 ---
 
@@ -114,7 +177,7 @@ Full 960×600 monitor window filled edge to edge with 16 horizontal colour bands
 ### 🧠 New Concepts
 
 - **VRAM dirty flag:** `Memory::write()` sets `vram_dirty` on any write to `0xC000–0xFFFF`. After execution the full 16 KB block is dumped to disk.
-- **VRAM folder convention:** Each program gets its own `<name>_vram/` folder alongside its `.bin` file. Frames are named `frame_0001.vram`, `frame_0002.vram`, etc. The folder is created automatically by the emulator.
+- **VRAM folder convention:** Each program gets its own `<n>_vram/` folder alongside its `.bin` file. Frames are named `frame_0001.vram`, `frame_0002.vram`, etc. The folder is created automatically by the emulator.
 - **Mode 1 byte encoding:** 1 byte = 4 pixels, 2 bits per pixel. Bit 1 of each pen index sits in the high nibble, bit 0 in the low nibble. Solid pen fill bytes: pen 0 = `0x00`, pen 1 = `0x0F`, pen 2 = `0xF0`, pen 3 = `0xFF`.
 - **CRTC interleaved addressing:** The CPC lays out pixel rows in an 8-way interleave, not top-to-bottom linearly. For pixel row `y` (0–199) and byte column `x` (0–79): `address = 0xC000 + (y % 8) * 0x0800 + (y / 8) * 0x0050 + x`. Verified by direct byte inspection of the `.vram` dump.
 - **SDL3 monitor:** `monitor.cpp` compiles to a standalone `monitor.exe`. It watches a `_vram/` folder, decodes each new `.vram` file using the CRTC formula and Mode 1 decoder, and renders it into a 960×600 window (320×200 scaled ×3). Uses `SDL_SetRenderScale` + `SDL_SetRenderDrawColor` + `SDL_RenderFillRect` — SDL3 handles all colour format translation internally with no platform-specific pixel format constants.
